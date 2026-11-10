@@ -58,6 +58,12 @@ class State(unittest.TestCase):
         self.assertEqual(cell_state(runs([1.0], status="error"), "accept", POLICY)[0], "more")
         self.assertEqual(cell_state(runs([1.0, 1.0], status="error"), "accept", POLICY)[0], "done")
 
+    def test_a_declared_decline_is_final(self):
+        declined = [{"status": "declined", "wall_s": 0.0, "valid": True, "declared": True}]
+        state, reason = cell_state(declined, "accept", POLICY)
+        self.assertEqual(state, "done")
+        self.assertIn("declines", reason)
+
     def test_mixed_verdicts_keep_measuring(self):
         mixed = runs([1.0] * 3) + runs([1.0], status="error")
         self.assertEqual(cell_state(mixed, "accept", POLICY)[0], "more")

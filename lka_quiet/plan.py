@@ -42,6 +42,8 @@ def consensus_status(records) -> str | None:
 def cell_state(records, expected: str | None, policy: dict) -> tuple[str, str]:
     """("done" | "more", why)."""
     runs = _valid(records)
+    if any(r.get("declared") for r in runs):
+        return "done", "the checker declines this test"
     if any(r["status"] == "timeout" for r in runs):
         return "done", "a timeout is final"
     if expected != "accept":

@@ -101,6 +101,16 @@ MUTANTS = [
      "the sensitivity view perturbs the weights"),
     ("lka_quiet/board.py", 'if test.get("outcome") != "accept":', "if False:",
      "only good tests are scored for performance"),
+    ("lka_quiet/session.py", "        if checker_hashes.get(record[\"checker\"]) != record.get(\"checker_hash\"):\n            continue\n", "",
+     "a run counts only for the checker revision it measured"),
+    ("lka_quiet/session.py", "since = self._last_good_seq if self._last_good_seq is not None else -1", "since = -1",
+     "a bad sentinel reading quarantines only the runs since the last good one"),
+    ("lka_quiet/session.py", "                if self.clock() >= deadline:\n", "                if False:\n",
+     "a session ends with its time budget"),
+    ("lka_quiet/session.py", "        self._record_declines()\n", "",
+     "declared declines are recorded without running"),
+    ("lka_quiet/plan.py", "    if any(r.get(\"declared\") for r in runs):\n", "    if False:\n",
+     "a declared decline is final"),
 ]
 
 
