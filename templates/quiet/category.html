@@ -12,6 +12,40 @@
     {% endfor %}
 </nav>
 
+{% if arena_rows %}
+{% set metric = metrics[(category.metrics | list)[0]] %}
+<div class="prose">
+<p>Placed as the official Arena places checkers, from the same runs as every other category:</p>
+<ol>
+    <li>fewest invalid proofs accepted;</li>
+    <li>then fewest valid proofs rejected;</li>
+    <li>then the fewest {{ metric.title | lower }} on {{ board.families[(category.families | list)[0]].title }}; a checker that did not check it is placed below every checker that did;</li>
+    <li>then the fewest tests declined, an error or a timeout counting as a decline.</li>
+</ol>
+<p>Checkers equal on all four keep the order in which the Arena reads them. Unlike every other category, this one places every checker,
+the reference and the unsound included, exactly where the Arena's board does; its factors are the {{ metric.title | lower }} against {{ board.reference }}.</p>
+</div>
+
+<div class="table-card" style="margin: 16px 0;">
+    <table class="data" id="arena-order">
+        <thead><tr><th class="n">Place</th><th>Checker</th><th class="n">Invalid proofs accepted</th><th class="n">Valid proofs rejected</th>
+            <th class="n">{{ metric.title }}, {{ board.families[(category.families | list)[0]].title }}</th><th class="n">× {{ board.reference }}</th>
+            <th class="n">Tests declined</th><th class="n">Places it can hold (95%)</th></tr></thead>
+        <tbody>
+        {% for row in arena_rows %}
+        <tr data-checker="{{ row.name }}"><td class="n">{{ row.place }}</td>
+            <td class="name"><a href="{{ row.href }}">{{ row.name }}</a>{% if row.reference %} <span class="muted">(reference)</span>{% endif %}{% if row.pending %} <span class="muted">(still being measured)</span>{% endif %}</td>
+            <td class="n">{% if row.invalid_accepted %}<span class="badge critical">{{ row.invalid_accepted }}</span>{% elif row.invalid_accepted is not none %}0{% else %}–{% endif %}</td>
+            <td class="n">{% if row.valid_rejected %}<span class="badge serious">{{ row.valid_rejected }}</span>{% elif row.valid_rejected is not none %}0{% else %}–{% endif %}</td>
+            <td class="n">{{ row.measure }}</td>
+            <td class="n">{% if row.factor is not none %}{{ row.factor | factor }}{% else %}–{% endif %}</td>
+            <td class="n">{% if row.declined is not none %}{{ row.declined }}{% else %}–{% endif %}</td>
+            <td class="n">{% if row.rank_lo %}{{ row.rank_lo }}–{{ row.rank_hi }}{% else %}–{% endif %}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
 <div class="table-card" style="margin: 16px 0;">
     <table class="data">
         <thead><tr><th>Metric</th><th class="n">Weight</th><th>Family</th><th class="n">Weight</th></tr></thead>
@@ -27,6 +61,7 @@
         </tbody>
     </table>
 </div>
+{% endif %}
 
 <figure class="chart-card">
     <div class="scroll-x">{{ forest_svg }}</div>

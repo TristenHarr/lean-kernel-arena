@@ -143,6 +143,7 @@ table.data { border-collapse: collapse; width: 100%; font-size: 13.5px; margin: 
 table.data th, table.data td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
 table.data th { color: var(--ink-2); font-weight: 600; font-size: 12.5px; background: var(--surface); }
 table.data td.n, table.data th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.data td.name { white-space: nowrap; }
 table.data tr:hover td { background: var(--surface-2); }
 .table-card { background: var(--surface); border: 1px solid var(--hairline); border-radius: 12px; padding: 4px 8px; overflow-x: auto; }
 

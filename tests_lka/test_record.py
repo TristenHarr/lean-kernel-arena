@@ -171,6 +171,18 @@ class Record(unittest.TestCase):
         record = build_record(REQUEST, observation(proc_stat_after=proc_stat_after(301)), MACHINE)
         self.assertTrue(record["valid"], record["invalid_reasons"])
 
+    def test_instructions_are_every_threads_user_and_kernel_count(self):
+        record = build_record(REQUEST, observation(), MACHINE)
+        self.assertEqual(record["instructions"], 9_100_000_000 + 41_000_000)
+
+    def test_instructions_are_unknown_when_perf_counted_nothing(self):
+        record = build_record(REQUEST, observation(perf_text=""), MACHINE)
+        self.assertIsNone(record["instructions"])
+
+    def test_instructions_are_unknown_when_a_count_was_multiplexed(self):
+        obs = observation(perf_text=(FIXTURES / "perf-plain-multiplexed-synthesized.json").read_text())
+        self.assertIsNone(build_record(REQUEST, obs, MACHINE)["instructions"])
+
     def test_multiplexing_invalidates(self):
         obs = observation(perf_text=(FIXTURES / "perf-plain-multiplexed-synthesized.json").read_text())
         record = build_record(REQUEST, obs, MACHINE)

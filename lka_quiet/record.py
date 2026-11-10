@@ -144,6 +144,8 @@ def build_record(request: dict, obs: dict, machine: dict) -> dict:
         energy_j = energy_delta_uj(energy["before_uj"], energy["after_uj"], energy["max_range_uj"]) / 1e6
 
     maxrss_kb = shim.get("maxrss_kb") if shim else None
+    retired = [counters.get("instructions_u"), counters.get("instructions_k")]
+    instructions = None if None in retired else sum(retired)
 
     record = {"schema": RUN_SCHEMA}
     for key in _REQUEST_FIELDS:
@@ -160,6 +162,7 @@ def build_record(request: dict, obs: dict, machine: dict) -> dict:
         "stragglers": obs.get("stragglers", 0),
         "wall_s": wall_s,
         "counters": counters,
+        "instructions": instructions,
         "cpu_usage_s": run_usage_usec / 1e6,
         "memory_peak_bytes": obs.get("memory_peak"),
         "maxrss_bytes": maxrss_kb * 1024 if maxrss_kb is not None else None,

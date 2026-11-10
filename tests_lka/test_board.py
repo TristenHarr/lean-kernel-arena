@@ -3,7 +3,11 @@
 import copy
 import json
 import math
+import os
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 
 from lka_quiet.board import BoardError, family_members, rank_sets, score_board, summarize_cells
 from lka_quiet.plan import Cell
@@ -456,3 +460,23 @@ class Integrity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Reproducible(unittest.TestCase):
+    def test_the_board_is_the_same_in_every_process(self):
+        """Re-scoring the published runs reproduces board.json byte for byte, so nothing may hang on
+        the order of a set, which Python varies from one process to the next."""
+        script = (
+            "import json\n"
+            "from tests_lka.test_board import board_for, checker_runs\n"
+            "board = board_for(checker_runs('official'), checker_runs('a', 0.8, jitter=0.03),\n"
+            "                  checker_runs('b', 0.9, mem_scale=0.7, jitter=0.05), checker_runs('c', 1.1, jitter=0.02))\n"
+            "print(json.dumps(board, sort_keys=True))\n"
+        )
+        root = Path(__file__).resolve().parent.parent
+        outputs = set()
+        for seed in ("1", "2", "3", "4", "5", "6"):
+            run = subprocess.run([sys.executable, "-c", script], cwd=root, capture_output=True, text=True,
+                                 env={**os.environ, "PYTHONHASHSEED": seed}, check=True)
+            outputs.add(run.stdout)
+        self.assertEqual(len(outputs), 1)

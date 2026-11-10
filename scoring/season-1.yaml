@@ -13,6 +13,7 @@ floors:
   wall_s: 0.02
   memory_bytes: 33554432     # 32 MiB
   energy_j: 0.1
+  instructions: 100000000    # about 20 ms of one core's work
 
 # A good test a checker does not accept (timeout, error, decline, OOM) scores twice the cap
 # (PAR-2, as in the SAT Competition).
@@ -20,12 +21,14 @@ failure_factor: 2
 caps:
   memory_bytes: 16106127360  # the memory limit of a run
   power_w: 25                # the N100 package's power ceiling
+  instruction_rate: 6.0e+9   # instructions per second, the Arena's own rate (lka.py build-site)
 
 metrics:
   T4: {lane: 4core, quantity: wall_s, title: "Wall time, 4 cores", unit: s}
   T1: {lane: 1core, quantity: wall_s, title: "Wall time, 1 core", unit: s}
   M: {lane: 4core, quantity: memory_bytes, title: "Peak memory", unit: B}
   E: {lane: 4core, quantity: energy_j, title: "Energy", unit: J}
+  I: {lane: 4core, quantity: instructions, title: "Instructions", unit: ""}
 
 # Only tests that should be accepted are scored for performance; bad tests and corner cases
 # count for correctness alone.
@@ -80,6 +83,11 @@ categories:
     description: Package energy with the whole machine.
     metrics: {E: 1}
     families: {libraries: 0.5, stress: 0.3, interactive: 0.2}
+  - id: instructions
+    title: Instructions
+    description: Instructions retired by every thread of the checker, user and kernel; the work done, whatever the clock and the cores.
+    metrics: {I: 1}
+    families: {libraries: 0.5, stress: 0.3, interactive: 0.2}
   - id: robustness
     title: Robustness
     description: Speed on the stress tests, on one core and on four.
@@ -94,6 +102,14 @@ categories:
     title: Mathlib
     description: Every metric on Mathlib alone.
     metrics: {T4: 0.35, T1: 0.25, M: 0.25, E: 0.15}
+    families: {mathlib: 1}
+  # The official Arena's own order, on this machine's runs: fewest invalid proofs accepted, then fewest
+  # valid proofs rejected, then fewest instructions on Mathlib, then fewest tests declined.
+  - id: arena
+    title: Arena order
+    description: The official Arena's rule on these runs. Fewest invalid proofs accepted, then fewest valid proofs rejected, then fewest instructions on Mathlib (checkers that do not check it below), then fewest tests declined.
+    rule: arena
+    metrics: {I: 1}
     families: {mathlib: 1}
 
 pareto: [multi-core, single-core, memory, energy]

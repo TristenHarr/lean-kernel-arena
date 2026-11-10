@@ -49,8 +49,19 @@ def fmt_joules(j) -> str:
     return f"{j / 1000:.2f} kJ" if j >= 1000 else f"{j:.1f} J"
 
 
+def fmt_instructions(n) -> str:
+    """An instruction count as the Arena writes one (lka.py format_instructions)."""
+    if n is None:
+        return "–"
+    for prefix, size in (("T", 10**12), ("G", 10**9), ("M", 10**6), ("k", 10**3)):
+        if n >= size:
+            return f"{n / size:.1f}\u202f{prefix}"
+    return str(int(n))
+
+
 def fmt_quantity(value, quantity: str) -> str:
-    return {"wall_s": fmt_seconds, "memory_bytes": fmt_bytes, "energy_j": fmt_joules}[quantity](value)
+    return {"wall_s": fmt_seconds, "memory_bytes": fmt_bytes, "energy_j": fmt_joules,
+            "instructions": fmt_instructions}[quantity](value)
 
 
 def rank_label(result: dict) -> str:
@@ -75,11 +86,32 @@ def forest_rows(board, category_id: str, href_prefix: str) -> list[dict]:
     rows = []
     for name in order:
         result = entries[name]["categories"][category_id]
-        if result["rank"] is None:
+        if result["rank"] is None or result["factor"] is None:
             continue
         rows.append({"name": name, "rank": rank_label(result), "factor": result["factor"],
                      "lo": result["factor_lo"], "hi": result["factor_hi"], "tied": result["tied"],
                      "href": f"{href_prefix}checker/{name}/"})
+    return rows
+
+
+def arena_rows(board, category_id: str, href_prefix: str) -> list[dict]:
+    """A category under the arena rule as the Arena's board lists it: every checker, in order, with
+    the counts that place it and the measurement that breaks their ties."""
+    entries = _entries(board)
+    category = next(c for c in board["categories"] if c["id"] == category_id)
+    quantity = board["metrics"][next(iter(category["metrics"]))]["quantity"]
+    rows = []
+    for name in category["order"]:
+        result = entries[name]["categories"][category_id]
+        counts = result.get("arena") or {}
+        rows.append({
+            "name": name, "href": f"{href_prefix}checker/{name}/", "reference": entries[name]["reference"],
+            "pending": result["rank"] is None, "place": rank_label(result),
+            "rank_lo": result["rank_lo"], "rank_hi": result["rank_hi"],
+            "invalid_accepted": counts.get("invalid_accepted"), "valid_rejected": counts.get("valid_rejected"),
+            "declined": counts.get("declined"), "measure": fmt_quantity(counts.get("measure"), quantity),
+            "factor": result["factor"], "lo": result["factor_lo"], "hi": result["factor_hi"],
+        })
     return rows
 
 
@@ -95,8 +127,9 @@ def leaders(board, category_id: str) -> dict:
         label = " = ".join(names)
     else:
         label = f"{names[0]}, {names[1]} and {len(names) - 2} more, tied"
+    placed = sum(1 for e in board["checkers"] if e["categories"][category_id]["rank"] is not None)
     return {"names": names, "label": label, "factor": first[0]["factor"], "lo": first[0]["lo"],
-            "hi": first[0]["hi"], "ranked": len(rows)}
+            "hi": first[0]["hi"], "ranked": placed}
 
 
 def unranked(board, category_id: str, baselines=()) -> list[dict]:
@@ -137,12 +170,14 @@ def rank_grid(board) -> dict:
     categories = board["categories"]
     overall = next(c for c in categories if c["id"] == "overall")
     names = [n for n in overall["order"] if entries[n]["ranked"]]
+    placed = {c["id"]: sum(1 for e in entries.values() if e["categories"][c["id"]]["rank"] is not None)
+              for c in categories}
     rows = []
     for name in names:
         cells = []
         for category in categories:
             result = entries[name]["categories"][category["id"]]
-            ranked = sum(1 for n in names if entries[n]["categories"][category["id"]]["rank"] is not None)
+            ranked = placed[category["id"]]
             if result["rank"] is None or ranked < 2:
                 cells.append({"text": "–", "q": None})
                 continue
@@ -200,7 +235,7 @@ def render(board: dict, season: dict, machine: dict, env, outdir: Path, build_in
     if board.get("schema") != BOARD_SCHEMA:
         raise SiteError(f"board.json is {board.get('schema')!r}; this site renders {BOARD_SCHEMA}: score it again with quiet-score")
     env.filters.update({"factor": charts.factor_text, "seconds": fmt_seconds, "bytes": fmt_bytes,
-                        "joules": fmt_joules})
+                        "joules": fmt_joules, "instructions": fmt_instructions})
     env.globals.update({"rank_label": rank_label, "interval_text": interval_text, "fmt_quantity": fmt_quantity,
                         "arena_index": "arena.html" if home_at_root else "./"})
     root = Path(outdir) / QUIET_DIR
@@ -267,11 +302,15 @@ def render(board: dict, season: dict, machine: dict, env, outdir: Path, build_in
         directory.mkdir(parents=True, exist_ok=True)
         rows = forest_rows(board, category["id"], "../../")
         names = [r["name"] for r in rows]
+        arena = category["rule"] == "arena"
+        subtitle = ("The measurement the rule ranks on, against the reference; places by the rule" if arena
+                    else descriptions.get(category["id"], ""))
         env.get_template("quiet/category.html").stream({
             **common, "root_path": "../../../", "quiet_root": "../../", "nav": "categories", "category": category,
             "description": descriptions.get(category["id"], ""),
-            "forest_svg": _svg(charts.forest(rows, title=category["title"], subtitle=descriptions.get(category["id"], ""))),
+            "forest_svg": _svg(charts.forest(rows, title=category["title"], subtitle=subtitle)),
             "rows": rows, "results": {n: entries[n]["categories"][category["id"]] for n in entries},
+            "arena_rows": arena_rows(board, category["id"], "../../") if arena else None,
             "unranked": unranked(board, category["id"], baselines),
             "h2h_svg": _svg(charts.heatmap(names, board["head_to_head"].get(category["id"], {}),
                                            title=f"Head to head, {category['title'].lower()}")),

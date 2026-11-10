@@ -8,7 +8,7 @@ With no results file it fetches the arena's latest published results (and keeps 
 for build-site); a path or URL names another round.
 
 Each official result becomes one run: its wall time stands for the 4-core lane, its CPU time for
-the 1-core lane, its max RSS for memory; there is no energy. These are single measurements on
+the 1-core lane, its max RSS for memory, its instruction count for instructions; there is no energy. These are single measurements on
 shared CI runners, which is exactly what the quiet board exists to replace, so the board this
 writes is marked as a preview in every page rendered from it. It is for designing the pages and
 for reading the official numbers under the quiet board's rules, never for publishing as results.
@@ -32,7 +32,7 @@ LANES = (("4core", "wall_time"), ("1core", "cpu_time"))
 LATEST = "https://arena.lean-lang.org/results.json"
 NOTE = ("Single measurements on shared CI runners re-scored under the quiet board's rules: "
         "wall time stands for the 4-core lane, CPU time for the 1-core lane, max RSS for memory, "
-        "no energy. Not quiet-box measurements.")
+        "the instruction count for instructions, no energy. Not quiet-box measurements.")
 
 
 def load_published(source: str, save: str | None) -> tuple[dict, str]:
@@ -75,6 +75,7 @@ def records_from(published: dict, epoch: str) -> list[dict]:
                 "schema": "lka-quiet-run/1", "checker": result["checker"], "test": result["test"], "lane": lane,
                 "expected": test.get("outcome"), "status": result["status"], "valid": True, "invalid_reasons": [],
                 "wall_s": wall, "memory_peak_bytes": result.get("max_rss") or None, "energy_j": None,
+                "instructions": result.get("instructions") or None,
                 "timeout_s": result.get("timeout") or test.get("timeout") or 300.0,
                 "cap_s": test.get("timeout") or 300.0,
                 "checker_hash": result.get("checker_hash") or "unknown", "test_sha256": test["sha256"],

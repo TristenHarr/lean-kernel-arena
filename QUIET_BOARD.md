@@ -9,8 +9,11 @@ memory, energy, and soundness. The site is a strict addition to the Arena's: `lk
 The full method, with every rule typeset, is the site's methodology page
 (`templates/quiet/methodology.html`). In short:
 
-- **Measure the target.** Scored: wall time (4 cores and 1 core), peak memory of every process of
-  the checker together, package energy. Recorded and shown, not scored: instructions, cycles, IPC.
+- **Measure the target.** The overall score: wall time (4 cores and 1 core), peak memory of every
+  process of the checker together, package energy. Instructions retired (every thread, user and
+  kernel) have a category of their own, and decide the **Arena order** category: the official board's
+  own rule (soundness, completeness, Mathlib instructions, declines) on the same runs, checked against
+  lka.py's `board_order_key` so the two boards read side by side. Recorded and shown: cycles, IPC.
 - **Runs prove their conditions.** A run that ran off the pinned clock, was throttled, shared its
   cores, or had a counter multiplexed is kept for the record and repeated. A run in which any of the
   checker's processes died of a signal or of memory is an error, whatever exit code a wrapper made.

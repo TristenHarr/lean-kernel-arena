@@ -20,21 +20,23 @@
     "floors": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["wall_s", "memory_bytes", "energy_j"],
+      "required": ["wall_s", "memory_bytes", "energy_j", "instructions"],
       "properties": {
         "wall_s": {"type": "number", "exclusiveMinimum": 0},
         "memory_bytes": {"type": "number", "exclusiveMinimum": 0},
-        "energy_j": {"type": "number", "exclusiveMinimum": 0}
+        "energy_j": {"type": "number", "exclusiveMinimum": 0},
+        "instructions": {"type": "number", "exclusiveMinimum": 0}
       }
     },
     "failure_factor": {"type": "number", "minimum": 1},
     "caps": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["memory_bytes", "power_w"],
+      "required": ["memory_bytes", "power_w", "instruction_rate"],
       "properties": {
         "memory_bytes": {"type": "integer", "minimum": 1},
-        "power_w": {"type": "number", "exclusiveMinimum": 0}
+        "power_w": {"type": "number", "exclusiveMinimum": 0},
+        "instruction_rate": {"type": "number", "exclusiveMinimum": 0}
       }
     },
     "metrics": {
@@ -46,7 +48,7 @@
         "required": ["lane", "quantity", "title", "unit"],
         "properties": {
           "lane": {"type": "string"},
-          "quantity": {"enum": ["wall_s", "memory_bytes", "energy_j"]},
+          "quantity": {"enum": ["wall_s", "memory_bytes", "energy_j", "instructions"]},
           "title": {"type": "string"},
           "unit": {"type": "string"}
         }
@@ -89,9 +91,12 @@
           "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
           "title": {"type": "string"},
           "description": {"type": "string"},
+          "rule": {"enum": ["weighted", "arena"]},
           "metrics": {"$ref": "#/definitions/weights"},
           "families": {"$ref": "#/definitions/weights"}
-        }
+        },
+        "if": {"properties": {"rule": {"const": "arena"}}, "required": ["rule"]},
+        "then": {"properties": {"metrics": {"maxProperties": 1}}}
       }
     },
     "pareto": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},

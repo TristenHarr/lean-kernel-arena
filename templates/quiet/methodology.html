@@ -10,8 +10,9 @@ is optimising the checker.</p>
 <div class="prose">
 <h2 id="principles">Principles</h2>
 <ul>
-    <li><strong>Measure the target.</strong> Wall time, peak memory and energy on real libraries are scored; instruction and cycle counts are recorded
-        for every run and shown, but they are a means, not the end.</li>
+    <li><strong>Measure the target.</strong> Wall time, peak memory and energy on real libraries make up the overall score. Instructions retired, the
+        Arena's own measure, have a category of their own and decide the <a href="#arena-order">Arena's order</a>, kept beside the others so the two boards
+        read side by side; cycle counts are recorded for every run and shown.</li>
     <li><strong>Many orthogonal measures.</strong> Specialising in one costs on the others; a checker no one beats on all four at once is marked Pareto-optimal.</li>
     <li><strong>Breadth with bounded weight.</strong> Whole libraries, stress tests and small files each carry a fixed share; within a family every test weighs the same,
         except Mathlib, which carries half of the libraries' share.</li>
@@ -109,7 +110,7 @@ the interval's half-width is within {{ '%.0f' % ((machine.repetitions.scored.ci_
 it once is enough to be unsound.</p>
 
 <h2 id="score">The score</h2>
-<p>For each metric <math><mi>m</mi></math> (wall time on four cores, on one core, peak memory, energy), each family <math><mi>f</mi></math>
+<p>For each metric <math><mi>m</mi></math> (wall time on four cores, on one core, peak memory, energy, instructions), each family <math><mi>f</mi></math>
 and each test <math><mi>t</mi></math>, a checker <math><mi>c</mi></math> is compared with the reference <math><mi>r</mi></math> by a log ratio:</p>
 <div class="formula">
 <math display="block"><mrow>
@@ -126,7 +127,8 @@ and each test <math><mi>t</mi></math>, a checker <math><mi>c</mi></math> is comp
 </div>
 <p>so a factor is a weighted geometric mean of how many times better than the reference the checker is. The weights of a category sum to one, as do
 <math><msub><mi>w</mi><mrow><mi>f</mi><mo>,</mo><mi>t</mi></mrow></msub></math> within each family. The floors
-<math><msub><mi>φ</mi><mi>m</mi></msub></math> ({{ (season.floors.wall_s * 1000) | int }} ms, {{ season.floors.memory_bytes | bytes }}, {{ season.floors.energy_j }} J) are the
+<math><msub><mi>φ</mi><mi>m</mi></msub></math> ({{ (season.floors.wall_s * 1000) | int }} ms, {{ season.floors.memory_bytes | bytes }}, {{ season.floors.energy_j }} J,
+{{ season.floors.instructions | instructions }} instructions) are the
 differences no one using a checker would notice. Because the reference enters every score as the same constant,</p>
 <div class="formula">
 <math display="block"><mrow>
@@ -139,11 +141,30 @@ error, decline or memory, is scored at twice its cap, as the SAT Competition's P
 <math display="block"><mrow>
   <msub><mi>x</mi><mtext>time</mtext></msub><mo>=</mo><mn>2</mn><msub><mi>T</mi><mi>t</mi></msub><mo>,</mo><mspace width="1em"/>
   <msub><mi>x</mi><mtext>memory</mtext></msub><mo>=</mo><mn>2</mn><mi>M</mi><mo>,</mo><mspace width="1em"/>
-  <msub><mi>x</mi><mtext>energy</mtext></msub><mo>=</mo><mn>2</mn><mover><mi>P</mi><mo>^</mo></mover><msub><mi>T</mi><mi>t</mi></msub>
+  <msub><mi>x</mi><mtext>energy</mtext></msub><mo>=</mo><mn>2</mn><mover><mi>P</mi><mo>^</mo></mover><msub><mi>T</mi><mi>t</mi></msub><mo>,</mo><mspace width="1em"/>
+  <msub><mi>x</mi><mtext>instructions</mtext></msub><mo>=</mo><mn>2</mn><mi>R</mi><msub><mi>T</mi><mi>t</mi></msub>
 </mrow></math>
 </div>
 <p>where <math><msub><mi>T</mi><mi>t</mi></msub></math> is the test's own time limit: a shorter limit a checker sets for itself may end its run sooner, but it
-never lowers what the failure costs.</p>
+never lowers what the failure costs. <math><mi>R</mi></math>, {{ season.caps.instruction_rate | instructions }} instructions a second, is the rate the
+Arena itself uses to turn instructions into time.</p>
+
+<h2 id="arena-order">The Arena's order</h2>
+<p>One category ranks exactly as the official Arena's board does, from this board's runs: lexicographically by</p>
+<div class="formula">
+<math display="block"><mrow>
+  <mi>key</mi><mo>(</mo><mi>c</mi><mo>)</mo><mo>=</mo><mo>(</mo>
+  <msub><mi>n</mi><mtext>unsound</mtext></msub><mo>,</mo><mspace width="0.4em"/>
+  <msub><mi>n</mi><mtext>incomplete</mtext></msub><mo>,</mo><mspace width="0.4em"/>
+  <msub><mi>I</mi><mtext>Mathlib</mtext></msub><mo>,</mo><mspace width="0.4em"/>
+  <msub><mi>n</mi><mtext>declined</mtext></msub><mo>)</mo>
+</mrow></math>
+</div>
+<p>the invalid proofs it accepted, the valid proofs it rejected, its instructions on Mathlib (infinite if it did not check Mathlib, or no count was
+taken), and the tests it declined, an error or a timeout counting as a decline and a corner case only when declined. Checkers equal on all four keep the
+order in which the Arena reads them. Unlike every other category it places every checker, the reference and the unsound included. Its places are
+confidence sets drawn from the same replicates as every other rank. The test suite checks it against the Arena's own code, lka.py's
+<span class="mono">board_order_key</span>, on a published round and on randomly drawn ones, so the two orders cannot drift apart.</p>
 </div>
 
 <h3>Season {{ season.season }}: the weights</h3>
@@ -154,7 +175,7 @@ never lowers what the failure costs.</p>
         <tbody>
         {% set rendered = categories | map(attribute='id') | list %}
         {% for category in season.categories %}
-        <tr><td>{% if category.id in rendered %}<a href="{{ quiet_root }}category/{{ category.id }}/">{{ category.title }}</a>{% else %}{{ category.title }} <span class="muted">(not measured here)</span>{% endif %}</td>
+        <tr><td>{% if category.id in rendered %}<a href="{{ quiet_root }}category/{{ category.id }}/">{{ category.title }}</a>{% else %}{{ category.title }} <span class="muted">(not measured here)</span>{% endif %}{% if category.rule == 'arena' %} <span class="muted">(<a href="#arena-order">the Arena's rule</a>)</span>{% endif %}</td>
             {% for metric_id, metric in season.metrics.items() %}<td class="n">{{ category.metrics.get(metric_id, '') }}</td>{% endfor %}
             {% for family_id, family in season.families.items() %}{% if family_id != 'mathlib' %}<td class="n">{{ category.families.get(family_id, '') }}</td>{% endif %}{% endfor %}
             <td class="n">{{ category.families.get('mathlib', '') }}</td></tr>

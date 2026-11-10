@@ -10,8 +10,16 @@ order of the board does not depend on which checker is the reference (Fleming & 
 "How not to lie with statistics", CACM 1986).
 
 A test a checker fails (timeout, error, decline, OOM) is scored as the failure factor times the
-cap (PAR-2, as in the SAT Competition): the timeout for time, the memory limit for memory, and
-the power ceiling times the timeout for energy.
+cap (PAR-2, as in the SAT Competition): the timeout for time, the memory limit for memory, the
+power ceiling times the timeout for energy, and the timeout at the Arena's own instruction rate
+for instructions.
+
+A category under the arena rule ranks as the official Arena's board does (lka.py
+board_order_key), lexicographically: fewest invalid proofs not rejected, then fewest valid proofs
+not accepted, then the one measurement it names (the Arena's: instructions on Mathlib; a checker
+that did not produce it ranks below every checker that did), then fewest tests declined, an error
+or a timeout counting as a decline. Exact ties keep the order in which the Arena reads its
+checkers, checkers/<name>.yaml in path order, as do exact ties in every other category.
 
 Uncertainty comes from a stratified bootstrap that redraws every cell's runs and every family's
 tests, the same draws for every checker in a replicate. Each checker's rank comes with its
@@ -31,7 +39,10 @@ from .stats import quantile_nearest_rank
 
 BOARD_SCHEMA = "lka-quiet-board/2"
 
-QUANTITY_FIELDS = {"wall_s": "wall_s", "memory_bytes": "memory_peak_bytes", "energy_j": "energy_j"}
+QUANTITY_FIELDS = {"wall_s": "wall_s", "memory_bytes": "memory_peak_bytes", "energy_j": "energy_j",
+                   "instructions": "instructions"}
+
+RULES = ("weighted", "arena")
 
 _TIE_EPSILON = 1e-12
 
@@ -167,6 +178,13 @@ class CellValue:
     log: float | None
     cdf: list[float] | None
     support: list[float] | None
+    values: list[float] | None = None
+
+    def drawn(self, pick: int | None) -> tuple[float, float]:
+        """The (floored log, raw value) of the run a bootstrap replicate drew, or of the point estimate."""
+        if pick is None:
+            return self.log, self.value
+        return self.support[pick], self.values[pick]
 
 
 def _bootstrap_median_cdf(n: int) -> list[float]:
@@ -193,6 +211,8 @@ def _penalty(metric: dict, summary: CellSummary, scoring: dict) -> float:
         return factor * scoring["caps"]["memory_bytes"]
     if quantity == "energy_j":
         return factor * scoring["caps"]["power_w"] * timeout
+    if quantity == "instructions":
+        return factor * scoring["caps"]["instruction_rate"] * timeout
     raise BoardError(f"unknown quantity {quantity}")
 
 
@@ -208,7 +228,7 @@ def _test_value(summary: CellSummary | None, metric: dict, scoring: dict) -> Cel
         return None
     support = [math.log(max(v, floor)) for v in values]
     point = values[(len(values) - 1) // 2]
-    return CellValue(point, False, math.log(max(point, floor)), _bootstrap_median_cdf(len(values)), support)
+    return CellValue(point, False, math.log(max(point, floor)), _bootstrap_median_cdf(len(values)), support, values)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -243,6 +263,22 @@ def rank_sets(probabilities: dict, contenders, confidence: float) -> dict:
         worse = sum(1 for d in contenders if d != c and probabilities[c][d] >= threshold)
         sets[c] = (1 + better, n - worse)
     return sets
+
+
+def _compare(a: tuple, b: tuple) -> int:
+    """-1, 0 or 1 as key a is better than, level with, or worse than key b, lexicographically,
+    with differences within the tie tolerance counted as level."""
+    for x, y in zip(a, b):
+        if x < y - _TIE_EPSILON:
+            return -1
+        if y < x - _TIE_EPSILON:
+            return 1
+    return 0
+
+
+def _file_order(name: str) -> tuple:
+    """Where the Arena reads a checker: checkers/<name>.yaml, in path order (lka.py load_yaml_files)."""
+    return tuple(f"{name}.yaml".split("/"))
 
 
 def _competition_ranks(scores: dict) -> dict:
@@ -285,6 +321,49 @@ def _correctness(name, tests, summaries, lane):
     return counts
 
 
+def _arena_counts(name, tests, summaries, lane) -> dict | None:
+    """The Arena's counts (lka.py compute_checker_stats) from each test's verdict: invalid proofs not
+    rejected, valid proofs not accepted, and tests declined, an error or a timeout being a decline
+    and a corner case counting only when declined. None while any test is unmeasured."""
+    counts = {"invalid_accepted": 0, "valid_rejected": 0, "declined": 0}
+    for test in tests:
+        summary = summaries.get(Cell(name, test["name"], lane))
+        status = summary.status if summary else None
+        if status is None:
+            return None
+        outcome = test.get("outcome")
+        if status in ("declined", "error", "timeout"):
+            counts["declined"] += 1
+        elif outcome == "reject" and status != "rejected":
+            counts["invalid_accepted"] += 1
+        elif outcome == "accept" and status != "accepted":
+            counts["valid_rejected"] += 1
+    return counts
+
+
+def _arena_measure(tv: CellValue | None, pick: int | None = None) -> float | None:
+    """The measurement the arena rule ranks on, if the checker produced it: the test accepted and
+    counted (the Arena treats a missing or zero count as no count)."""
+    if tv is None or tv.failed:
+        return None
+    _, raw = tv.drawn(pick)
+    return raw if raw and raw > 0 else None
+
+
+def _arena_key(counts: dict, measure: float | None) -> tuple:
+    return (counts["invalid_accepted"], counts["valid_rejected"],
+            measure if measure is not None else math.inf, counts["declined"])
+
+
+def _arena_term(category: dict, members: dict) -> tuple[str, str]:
+    terms = sorted({(metric_id, test_name) for metric_id in category["metrics"]
+                    for family_id in category["families"] for test_name, _ in members[family_id]})
+    if len(terms) != 1:
+        raise BoardError(f"category {category['id']}: the arena rule ranks on one measurement of one test, "
+                         f"not {len(terms)}")
+    return terms[0]
+
+
 def score_board(tests, checkers, records, scoring: dict) -> dict:
     records = list(records)
     epochs = sorted({r.get("epoch") for r in records})
@@ -307,20 +386,27 @@ def score_board(tests, checkers, records, scoring: dict) -> dict:
     members = family_members(tests, scoring["families"])
     categories = []
     for category in scoring["categories"]:
+        rule = category.get("rule", "weighted")
+        if rule not in RULES:
+            raise BoardError(f"category {category['id']}: unknown rule {rule!r}")
+        if rule == "arena" and len(category["metrics"]) != 1:
+            raise BoardError(f"category {category['id']}: the arena rule ranks on one metric")
         nonempty = {f for f, m in members.items() if m}
         categories.append({
             "id": category["id"],
             "title": category["title"],
+            "rule": rule,
             "metrics": _normalized(category["metrics"], available),
             "families": _normalized(category["families"], nonempty),
         })
     categories = [c for c in categories if c["metrics"] and c["families"]]
+    arena_terms = {c["id"]: _arena_term(c, members) for c in categories if c["rule"] == "arena"}
     scored_tests = sorted({t for ms in members.values() for t, _ in ms})
 
     values: dict[str, dict[tuple[str, str], CellValue]] = {}
     for name in names:
         per = {}
-        for metric_id in available:
+        for metric_id in (m for m in metrics if m in available):
             metric = metrics[metric_id]
             for test_name in scored_tests:
                 tv = _test_value(summaries.get(Cell(name, test_name, metric["lane"])), metric, scoring)
@@ -334,34 +420,50 @@ def score_board(tests, checkers, records, scoring: dict) -> dict:
 
     point_logs = {name: {k: tv.log for k, tv in values[name].items()} for name in names}
     raw = {cat["id"]: {name: _category_raw(point_logs[name], cat, members) for name in names} for cat in categories}
+    counts = {cat["id"]: {name: _arena_counts(name, tests, summaries, metrics[arena_terms[cat["id"]][0]]["lane"])
+                          for name in names}
+              for cat in categories if cat["rule"] == "arena"}
 
     bootstrap = scoring["bootstrap"]
     confidence = bootstrap.get("confidence", 0.95)
-    replicates = _bootstrap(names, values, categories, family_split(tests, scoring["families"]), bootstrap)
+    replicates = _bootstrap(names, values, categories, family_split(tests, scoring["families"]), bootstrap,
+                            arena_terms, counts)
 
     entries = {name: {"name": name, "reference": name == reference, "ranked": name in ranked,
                       "gates": gates[name], "categories": {}} for name in names}
     head_to_head = {}
+    order = {}
     upper_q = 1 - (1 - confidence) / 2
     for cat in categories:
         cat_id = cat["id"]
-        ref_raw = raw[cat_id][reference]
-        contenders = [n for n in ranked if raw[cat_id][n] is not None]
+        arena = cat["rule"] == "arena"
+        if arena:
+            term = arena_terms[cat_id]
+            measures = {n: _arena_measure(values[n].get(term)) for n in names}
+            keys = {n: _arena_key(counts[cat_id][n], measures[n]) if counts[cat_id][n] else None for n in names}
+            logs = {n: math.log(m) if m is not None else None for n, m in measures.items()}
+            contenders = [n for n in names if keys[n] is not None]
+        else:
+            keys = {n: (raw[cat_id][n],) if raw[cat_id][n] is not None else None for n in names}
+            logs = raw[cat_id]
+            contenders = [n for n in ranked if keys[n] is not None]
         draws = replicates[cat_id]
         wins = {a: {b: 0.0 for b in contenders if b != a} for a in contenders}
         factor_samples = {n: [] for n in names}
         for replicate in draws:
-            if reference in replicate:
-                for n, score in replicate.items():
-                    factor_samples[n].append(math.exp(-(score - replicate[reference])))
-            scores = {n: replicate[n] for n in contenders}
+            ref_log = replicate.get(reference, (None, None))[1]
+            if ref_log is not None:
+                for n, (_, log) in replicate.items():
+                    if log is not None:
+                        factor_samples[n].append(math.exp(-(log - ref_log)))
             for a in contenders:
                 for b in contenders:
                     if a == b:
                         continue
-                    if scores[a] < scores[b] - _TIE_EPSILON:
+                    verdict = _compare(replicate[a][0], replicate[b][0])
+                    if verdict < 0:
                         wins[a][b] += 1
-                    elif abs(scores[a] - scores[b]) <= _TIE_EPSILON:
+                    elif verdict == 0:
                         wins[a][b] += 0.5
         count = max(len(draws), 1)
         exact = {a: {b: w / count for b, w in row.items()} for a, row in wins.items()}
@@ -370,13 +472,16 @@ def score_board(tests, checkers, records, scoring: dict) -> dict:
         rank_counts: dict[int, int] = {}
         for lo, _ in sets.values():
             rank_counts[lo] = rank_counts.get(lo, 0) + 1
+        ref_log = logs[reference]
         for name in names:
-            score = raw[cat_id][name]
-            relative = None if score is None or ref_raw is None else score - ref_raw
+            relative = None if logs[name] is None or ref_log is None else logs[name] - ref_log
             samples = factor_samples[name] if relative is not None else []
+            factor = None
+            if relative is not None:
+                factor = measures[reference] / measures[name] if arena else math.exp(-relative)
             result = {
                 "score": _round(relative),
-                "factor": _round(math.exp(-relative), 6) if relative is not None else None,
+                "factor": _round(factor, 6),
                 "factor_lo": _round(quantile_nearest_rank(samples, (1 - confidence) / 2), 6) if samples else None,
                 "factor_hi": _round(quantile_nearest_rank(samples, upper_q), 6) if samples else None,
                 "rank": None, "rank_lo": None, "rank_hi": None, "tied": False,
@@ -384,7 +489,10 @@ def score_board(tests, checkers, records, scoring: dict) -> dict:
             if name in sets:
                 lo, hi = sets[name]
                 result.update({"rank": lo, "rank_lo": lo, "rank_hi": hi, "tied": rank_counts[lo] > 1})
+            if arena:
+                result["arena"] = {**counts[cat_id][name], "measure": measures[name]} if counts[cat_id][name] else None
             entries[name]["categories"][cat_id] = result
+        order[cat_id] = _display_order(names, keys, {n: entries[n]["categories"][cat_id]["rank"] for n in names})
 
     _pareto(entries, ranked, scoring.get("pareto", []))
     _sensitivity(entries, ranked, names, point_logs, categories, members, scoring.get("sensitivity"))
@@ -409,7 +517,6 @@ def score_board(tests, checkers, records, scoring: dict) -> dict:
 
     needed = len(names) * len(tests) * len(lanes)
     measured = sum(1 for cell, s in summaries.items() if s.valid and cell.lane in lanes)
-    order = {cat["id"]: _display_order(entries, names, cat["id"]) for cat in categories}
     return {
         "schema": BOARD_SCHEMA,
         "season": scoring.get("season"),
@@ -426,13 +533,12 @@ def score_board(tests, checkers, records, scoring: dict) -> dict:
     }
 
 
-def _display_order(entries, names, cat_id):
+def _display_order(names, keys, ranks):
     """Ranked checkers by their estimate (the rank column says which gaps are significant), then
-    the unranked with a score, then those still being measured."""
+    the unranked with a score, then those still being measured; exact ties in the Arena's order."""
     def key(name):
-        result = entries[name]["categories"][cat_id]
-        group = 0 if result["rank"] is not None else 1 if result["score"] is not None else 2
-        return (group, result["score"] if result["score"] is not None else math.inf, name)
+        group = 0 if ranks[name] is not None else 1 if keys[name] is not None else 2
+        return (group, keys[name] or (), _file_order(name))
     return sorted(names, key=key)
 
 
@@ -440,25 +546,27 @@ def _display_order(entries, names, cat_id):
 # Bootstrap
 
 
-def _bootstrap(names, values, categories, splits, config) -> dict[str, list[dict]]:
+def _bootstrap(names, values, categories, splits, config, arena_terms, counts) -> dict[str, list[dict]]:
+    """Each category's replicates: for every checker it can score, its key (what ranks it) and the
+    log its factor is drawn from (None when it has no factor). Every category of a replicate sees
+    the same run drawn from each cell and the same tests drawn from each family."""
     rng = SplitMix64(seed_from(str(config["seed"]), "bootstrap"))
     replicates = config["replicates"]
     out = {cat["id"]: [] for cat in categories}
     family_ids = sorted({f for cat in categories for f in cat["families"]})
     plans = {family_id: splits[family_id] for family_id in family_ids}
 
-    contenders = list(names)
     for _ in range(replicates):
-        logs = {}
-        for name in contenders:
+        picks = {}
+        for name in names:
             per = {}
             for key, tv in values[name].items():
                 if tv.cdf is None:
-                    per[key] = tv.log
+                    per[key] = None
                 else:
                     u = (rng.next_u64() >> 11) / 9007199254740992.0
-                    per[key] = tv.support[min(bisect.bisect_left(tv.cdf, u), len(tv.support) - 1)]
-            logs[name] = per
+                    per[key] = min(bisect.bisect_left(tv.cdf, u), len(tv.support) - 1)
+            picks[name] = per
         drawn = {}
         for family_id, (pinned, free, free_weight) in plans.items():
             sample = list(pinned)
@@ -468,23 +576,33 @@ def _bootstrap(names, values, categories, splits, config) -> dict[str, list[dict
             drawn[family_id] = sample
         for cat in categories:
             scores = {}
-            for name in contenders:
+            for name in names:
+                if cat["rule"] == "arena":
+                    if counts[cat["id"]][name] is None:
+                        continue
+                    term = arena_terms[cat["id"]]
+                    measure = _arena_measure(values[name].get(term), picks[name].get(term))
+                    scores[name] = (_arena_key(counts[cat["id"]][name], measure),
+                                    math.log(measure) if measure is not None else None)
+                    continue
                 total = []
                 complete = True
                 for metric_id, alpha in cat["metrics"].items():
                     for family_id, beta in cat["families"].items():
                         for test_name, weight in drawn[family_id]:
-                            value = logs[name].get((metric_id, test_name))
-                            if value is None:
+                            key = (metric_id, test_name)
+                            tv = values[name].get(key)
+                            if tv is None:
                                 complete = False
                                 break
-                            total.append(alpha * beta * weight * value)
+                            total.append(alpha * beta * weight * tv.drawn(picks[name][key])[0])
                         if not complete:
                             break
                     if not complete:
                         break
                 if complete:
-                    scores[name] = math.fsum(total)
+                    score = math.fsum(total)
+                    scores[name] = ((score,), score)
             out[cat["id"]].append(scores)
     return out
 

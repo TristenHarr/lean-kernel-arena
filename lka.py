@@ -2107,6 +2107,25 @@ def compute_checker_stats(checker: dict, tests: list[dict], results: dict) -> di
     }
 
 
+def board_order_key(stats: dict) -> tuple:
+    """The key the board sorts checkers by, given their compute_checker_stats:
+    1. Number of bad tests not rejected (ascending - giving a bad response to a
+       negative test is the worst failure)
+    2. Number of good (non-declined) tests not accepted (ascending - wrongly
+       rejecting a good test is a serious bug; declines don't count here)
+    3. Instruction count for processing mathlib (ascending, with None/0 values
+       last - checkers that cope with mathlib rank on top, sorted by speed,
+       others below)
+    4. Number of tests declined (ascending - a final tie-breaker; serious
+       checkers may decline less important tests without being penalized)
+    """
+    bad_not_rejected = stats["reject_total"] - stats["reject_correct"]
+    good_not_accepted = stats["accept_total"] - stats["accept_correct"]
+    mathlib_instructions = stats["mathlib_instructions"]
+    instructions_sort_key = mathlib_instructions if mathlib_instructions and mathlib_instructions > 0 else float('inf')
+    return (bad_not_rejected, good_not_accepted, instructions_sort_key, stats["declined_count"])
+
+
 def get_build_metadata() -> dict:
     """Get build metadata including timestamp, git revision, and GitHub action info."""
     metadata = {
@@ -2680,29 +2699,7 @@ def cmd_build_site(args: argparse.Namespace) -> int:
     for checker in checkers:
         checker["stats"] = compute_checker_stats(checker, tests, results)
 
-    # Sort checkers by the specified criteria:
-    # 1. Number of bad tests not rejected (ascending - giving a bad response to a
-    #    negative test is the worst failure)
-    # 2. Number of good (non-declined) tests not accepted (ascending - wrongly
-    #    rejecting a good test is a serious bug; declines don't count here)
-    # 3. Instruction count for processing mathlib (ascending, with None/0 values
-    #    last - checkers that cope with mathlib rank on top, sorted by speed,
-    #    others below)
-    # 4. Number of tests declined (ascending - a final tie-breaker; serious
-    #    checkers may decline less important tests without being penalized)
-    def sort_key(checker):
-        stats = checker["stats"]
-        bad_not_rejected = stats["reject_total"] - stats["reject_correct"]  # Should be low
-        good_not_accepted = stats["accept_total"] - stats["accept_correct"]  # Should be low
-        declined_count = stats["declined_count"]  # Should be low
-        mathlib_instructions = stats["mathlib_instructions"]
-
-        # For mathlib_instructions: None/0 values should be treated as infinity (sort last)
-        instructions_sort_key = mathlib_instructions if mathlib_instructions and mathlib_instructions > 0 else float('inf')
-
-        return (bad_not_rejected, good_not_accepted, instructions_sort_key, declined_count)
-
-    checkers.sort(key=sort_key)
+    checkers.sort(key=lambda checker: board_order_key(checker["stats"]))
 
     # Group tests (e.g. perf/, tutorial/) into collapsible table rows, with
     # per-checker summary statistics for the group summary row

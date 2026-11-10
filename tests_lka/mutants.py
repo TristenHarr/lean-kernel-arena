@@ -5,8 +5,9 @@ and the test suite must fail on each.
     python3 tests_lka/mutants.py            # all mutants
     python3 tests_lka/mutants.py board      # those whose file matches
 
-Each mutant is applied to a scratch copy of lka_quiet/ and tests_lka/; the working tree is never
-touched. Exit status is the number of surviving mutants.
+Each mutant is applied to a scratch copy of the whole tree (build outputs aside); the working tree
+is never touched. The unmutated copy must pass first: a suite that fails on its own would kill
+every mutant and prove nothing. Exit status is the number of surviving mutants.
 """
 
 import shutil
@@ -16,6 +17,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+SKIP = shutil.ignore_patterns(".git", "_build", "_out", "_results", "__pycache__")
 
 # (file, original text, mutated text, the promise it breaks)
 MUTANTS = [
@@ -100,8 +102,8 @@ MUTANTS = [
      "cells are summarised by their median"),
     ("lka_quiet/board.py", "and any(o < v for o, v in zip(other, vector))", "",
      "an equal vector does not dominate"),
-    ("lka_quiet/board.py", "relative = None if score is None or ref_raw is None else score - ref_raw",
-     "relative = score", "scores are relative to the reference"),
+    ("lka_quiet/board.py", "relative = None if logs[name] is None or ref_log is None else logs[name] - ref_log",
+     "relative = logs[name]", "scores are relative to the reference"),
     ("lka_quiet/board.py", "                weights[key] *= factor\n", "                weights[key] *= 1\n",
      "the sensitivity view perturbs the weights"),
     ("lka_quiet/board.py", 'if test.get("outcome") != "accept":', "if False:",
@@ -118,41 +120,89 @@ MUTANTS = [
      "a declared decline is final"),
     ("lka_quiet/board.py", "    timeout = summary.cap_s\n", "    timeout = summary.timeout_s or summary.cap_s\n",
      "a failure is scored at the test's cap, never the checker's own shorter limit"),
-    ("lka_quiet/board.py", "        return (group, result[\"score\"] if result[\"score\"] is not None else math.inf, name)",
-     "        return (group, result[\"rank\"] or 0, name)", "rows follow the point estimates"),
+    ("lka_quiet/board.py", "        return (group, keys[name] or (), _file_order(name))",
+     "        return (group, (ranks[name] or 0,), _file_order(name))", "rows follow the point estimates"),
     ("lka_quiet/session.py",
      "        \"cap_s\": float(scaled_timeout(test.get(\"timeout\"), None, machine)),\n        \"checker_hash\": checker[\"source_hash\"], \"test_sha256\"",
      "        \"checker_hash\": checker[\"source_hash\"], \"test_sha256\"", "a declared decline carries the test's cap"),
+    ("lka_quiet/board.py", "        for metric_id in (m for m in metrics if m in available):\n",
+     "        for metric_id in available:\n", "the bootstrap draws the same runs in every process"),
+    ("lka_quiet/board.py", "        return factor * scoring[\"caps\"][\"instruction_rate\"] * timeout\n",
+     "        return scoring[\"caps\"][\"instruction_rate\"] * timeout\n",
+     "a failure costs twice the cap in instructions too"),
+    ("lka_quiet/record.py", "instructions = None if None in retired else sum(retired)", "instructions = retired[0]",
+     "instructions are every thread's user and kernel count"),
+    ("quietbox/preview-from-arena.py", "\"instructions\": result.get(\"instructions\") or None,",
+     "\"instructions\": None,", "the preview carries the official instruction counts"),
+    ("lka_quiet/board.py", "    return tuple(f\"{name}.yaml\".split(\"/\"))\n", "    return (name,)\n",
+     "exact ties keep the Arena's file order"),
+    ("lka_quiet/board.py", "        outcome = test.get(\"outcome\")\n        if status in (\"declined\", \"error\", \"timeout\"):\n",
+     "        outcome = test.get(\"outcome\")\n        if status == \"declined\":\n",
+     "under the arena rule an error or a timeout is a decline"),
+    ("lka_quiet/board.py", "            counts[\"invalid_accepted\"] += 1\n", "            pass\n",
+     "under the arena rule an accepted invalid proof counts"),
+    ("lka_quiet/board.py", "    return (counts[\"invalid_accepted\"], counts[\"valid_rejected\"],",
+     "    return (counts[\"valid_rejected\"], counts[\"invalid_accepted\"],",
+     "under the arena rule soundness comes before completeness"),
+    ("lka_quiet/board.py", "            measure if measure is not None else math.inf, counts[\"declined\"])",
+     "            measure if measure is not None else 0, counts[\"declined\"])",
+     "a checker that did not check Mathlib ranks below every one that did"),
+    ("lka_quiet/board.py", "    return raw if raw and raw > 0 else None\n", "    return raw\n",
+     "a zero instruction count is no count"),
+    ("lka_quiet/board.py", "            contenders = [n for n in names if keys[n] is not None]\n",
+     "            contenders = [n for n in ranked if keys[n] is not None]\n",
+     "the arena rule places every checker, the unsound and the reference too"),
+    ("lka_quiet/board.py", "factor = measures[reference] / measures[name] if arena else math.exp(-relative)",
+     "factor = measures[name] / measures[reference] if arena else math.exp(-relative)",
+     "the arena factor is how many times fewer instructions than the reference"),
+    ("lka.py", "    return (bad_not_rejected, good_not_accepted, instructions_sort_key, stats[\"declined_count\"])",
+     "    return (good_not_accepted, bad_not_rejected, instructions_sort_key, stats[\"declined_count\"])",
+     "the arena category is checked against lka.py's own key, not a copy of it"),
+    ("lka_quiet/site.py", "        if result[\"rank\"] is None or result[\"factor\"] is None:\n",
+     "        if result[\"rank\"] is None:\n", "the forest holds only checkers with a factor"),
+    ("lka_quiet/site.py", "            ranked = placed[category[\"id\"]]\n",
+     "            ranked = sum(1 for n in names if entries[n][\"categories\"][category[\"id\"]][\"rank\"] is not None)\n",
+     "the rank grid shades each category by its own field"),
+    ("lka_quiet/site.py", "\"hi\": first[0][\"hi\"], \"ranked\": placed}", "\"hi\": first[0][\"hi\"], \"ranked\": len(rows)}",
+     "a leader tile counts every placed checker"),
 ]
 
 
-def run_mutant(path: str, original: str, mutated: str) -> tuple[bool, str]:
+def run_suite(mutant: tuple[str, str, str] | None) -> tuple[str, str]:
+    """The suite on a scratch copy of the tree with `mutant` (file, original, mutated) applied:
+    ("pass" or "fail", its output), or ("broken", why) when the original text is not found once."""
     with tempfile.TemporaryDirectory(prefix="lka-mutant-") as tmp:
-        tmp = Path(tmp)
-        shutil.copytree(ROOT / "lka_quiet", tmp / "lka_quiet")
-        shutil.copytree(ROOT / "tests_lka", tmp / "tests_lka")
-        target = tmp / path
-        source = target.read_text()
-        if source.count(original) != 1:
-            return False, f"the original text occurs {source.count(original)} times"
-        target.write_text(source.replace(original, mutated))
+        copy = Path(tmp) / "tree"
+        shutil.copytree(ROOT, copy, ignore=SKIP)
+        if mutant:
+            path, original, mutated = mutant
+            target = copy / path
+            source = target.read_text()
+            if source.count(original) != 1:
+                return "broken", f"the original text occurs {source.count(original)} times"
+            target.write_text(source.replace(original, mutated))
         result = subprocess.run(
             [sys.executable, "-m", "unittest", "discover", "-s", "tests_lka", "-t", "."],
-            cwd=tmp, capture_output=True, text=True, timeout=600,
+            cwd=copy, capture_output=True, text=True, timeout=1200,
         )
-        return result.returncode != 0, ""
+        return ("pass" if result.returncode == 0 else "fail"), result.stderr
 
 
 def main() -> int:
     selector = sys.argv[1] if len(sys.argv) > 1 else ""
+    verdict, output = run_suite(None)
+    if verdict != "pass":
+        print(output)
+        print("the suite fails on an unmutated copy of the tree; no mutant can be judged until it passes")
+        return 1
     survivors = 0
     chosen = [m for m in MUTANTS if selector in m[0]]
     for path, original, mutated, promise in chosen:
-        killed, problem = run_mutant(path, original, mutated)
-        if problem:
-            print(f"BROKEN   {path}: {promise} ({problem})")
+        verdict, output = run_suite((path, original, mutated))
+        if verdict == "broken":
+            print(f"BROKEN   {path}: {promise} ({output})")
             survivors += 1
-        elif killed:
+        elif verdict == "fail":
             print(f"killed   {path}: {promise}")
         else:
             print(f"SURVIVED {path}: {promise}")

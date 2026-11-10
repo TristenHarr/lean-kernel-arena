@@ -117,7 +117,8 @@ details.page-details > summary h3 {
     {% if quiet_board %}
     <p class="card" style="padding: 0.8rem 1rem; border-left: 4px solid #2a78d6;">
         <strong><a href="quiet/">The Quiet Board</a></strong> (unofficial): every checker below, measured again on one dedicated, silent machine:
-        wall time on one core and on four, peak memory and energy, ranked with 95% intervals in an overall ranking and {{ quiet_board.categories | length - 1 }} categories.
+        wall time on one core and on four, peak memory, energy and instructions, ranked with 95% intervals in an overall ranking and {{ quiet_board.categories | length - 1 }} categories,
+        one of them this board's own order on those runs.
     </p>
     {% endif %}
     
