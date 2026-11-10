@@ -52,12 +52,8 @@ jobs:
         run: python3 -m unittest discover -s tests_lka -t .
       - name: Every checker and test definition is valid
         run: python3 lka.py list-checkers > /dev/null
-      - name: The site renders
-        run: |
-          curl -fsSL -o official-results.json https://arena.lean-lang.org/results.json
-          python3 quietbox/preview-from-arena.py official-results.json --season "$SEASON" --out _build/preview.json
-          python3 lka.py build-site --outdir _out --results official-results.json --board _build/preview.json \
-            --machine "$MACHINE" --quiet-home
+      - name: The site renders, from the latest official round
+        run: quietbox/preview-live.sh _out
 
   measure:
     name: Build and measure on the quiet box

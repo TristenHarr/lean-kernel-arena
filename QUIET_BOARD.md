@@ -44,10 +44,9 @@ nix develop --command python3 -m unittest discover -s tests_lka -t .   # every u
 nix develop --command python3 tests_lka/mutants.py                      # every mutant must be killed
 quietbox/selftest-in-container.sh                                       # the measurement chain, end to end, in Docker
 
-# the official round's numbers under the board's rules (a preview, labelled as such on every page)
-curl -fsSLO https://arena.lean-lang.org/results.json
-nix develop --command python3 quietbox/preview-from-arena.py results.json --season scoring/season-1.yaml --out _build/preview.json
-nix develop --command python3 lka.py build-site --results results.json --board _build/preview.json --machine machines/n100-quiet.yaml
+# the latest official round under the board's rules (a preview, labelled as such on every page,
+# naming the round's revision and when it was published), rendered into _out
+nix develop --command quietbox/preview-live.sh
 ```
 
 ## Standing up a quiet box

@@ -29,7 +29,8 @@
     <div class="notice" role="note">
         <span class="icon" aria-hidden="true">⚠</span>
         <div><strong>Preview, not quiet-box measurements.</strong>
-        These pages are drawn from {{ preview.source }} (revision <span class="mono">{{ preview.arena_revision[:12] }}</span>):
+        These pages are drawn from {{ preview.source }}
+        (revision {% if preview.revision_url %}<a class="mono" href="{{ preview.revision_url }}">{{ preview.arena_revision[:12] }}</a>{% else %}<span class="mono">{{ preview.arena_revision[:12] }}</span>{% endif %}{% if preview.published %}, published {{ preview.published }}{% endif %}):
         {{ preview.note }}</div>
     </div>
     {% endif %}
