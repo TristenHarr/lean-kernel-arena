@@ -1,0 +1,70 @@
+# The quiet box: an Intel N100 mini PC given over to the board and nothing else.
+#
+# Values marked as calibrated are written by `quietbox/calibrate.py` from measurements on the box
+# itself (the thermal soak and the reference checker's timings); until then they are null and
+# `lka.py measure` refuses to start a scored round.
+schema: lka-quiet-machine/1
+name: n100-quiet
+host: firebat-2
+cpu: Intel N100 (4 Gracemont cores, no SMT)
+
+# CPU 0 keeps the system, the runner, the measurement helper and every interrupt. The 4-core
+# lane is the whole machine; the 1-core lane is CPU 3 alone.
+housekeeping: [0]
+lanes:
+  4core: [0, 1, 2, 3]
+  1core: [3]
+
+frequency:
+  pinned_hz: null            # calibrated: the highest frequency held on all cores for 2 h unthrottled
+  tolerance: 0.005           # a run whose cycles / task-clock strays further is repeated
+  min_task_clock_s: 0.2      # shorter runs are too short to judge their frequency
+
+memory:
+  max_bytes: 16106127360     # 15 GiB: the arena runner's 16 GB less its operating system
+  pids_max: 32768
+
+interference:
+  max_fraction: 0.005        # foreign CPU allowed on the lane, as a share of the run's CPU-time budget
+  floor_ms: 20               # two readings of 10 ms jiffies
+  jiffy_ms: 10
+
+energy:
+  rapl_domain: /sys/class/powercap/intel-rapl:0
+
+# Every checker has its own user and home (its toolchains included), so no entry can touch
+# another's build. It builds with network to the internet only; it runs with no network at all,
+# its home behind an overlay whose writes vanish when the run ends.
+sandbox:
+  user_prefix: lkc-          # the user is the prefix and the first 12 hex digits of sha256(name)
+  homes: /srv/lka/checkers   # each checker's home is homes/<name>
+  tmp_bytes: 4294967296      # each run's private /tmp
+
+timeouts:
+  box_factor: null           # calibrated: official's wall time here over its wall time on the arena's runner
+  default_s: 21600
+  minimum_s: 30
+
+repetitions:
+  scored: {n_min: 7, n_max: 15, ci_rel: 0.01, confidence: 0.95}
+  heavy: {threshold_s: 60, n_min: 3, n_max: 5, spread_rel: 0.01}
+  verdict_only: {n: 3}
+  failure: {n: 2}
+
+# A frozen binary on a frozen input, run at the start and end of every session and between
+# batches; a reading outside its control limits stops the session and quarantines what ran
+# since the last good reading.
+sentinel:
+  checker: official
+  test: init-prelude
+  every_s: 7200
+  limits: null               # calibrated: mean and 3-sigma band of the sentinel's wall time
+
+paths:
+  state: /srv/lka
+  tests: /srv/lka/tests
+  checkers: /srv/lka/checkers
+  results: /srv/lka/results
+  acct: /var/log/lka/pacct
+  helper: /usr/local/libexec/lka/lka-measure
+  shim: /usr/local/libexec/lka/lka-shim

@@ -1,0 +1,151 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Quiet-box machine profile",
+  "description": "The machine a quiet board is measured on: its lanes, the conditions every run is checked against, and where its files live.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "name", "host", "cpu", "housekeeping", "lanes", "frequency", "memory", "interference", "energy", "sandbox", "timeouts", "repetitions", "sentinel", "paths"],
+  "definitions": {
+    "cpus": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 1, "uniqueItems": true},
+    "nullable_positive": {"anyOf": [{"type": "null"}, {"type": "number", "exclusiveMinimum": 0}]}
+  },
+  "properties": {
+    "schema": {"const": "lka-quiet-machine/1"},
+    "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "host": {"type": "string"},
+    "cpu": {"type": "string"},
+    "housekeeping": {"$ref": "#/definitions/cpus"},
+    "lanes": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/definitions/cpus"}
+    },
+    "frequency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pinned_hz", "tolerance", "min_task_clock_s"],
+      "properties": {
+        "pinned_hz": {"$ref": "#/definitions/nullable_positive"},
+        "tolerance": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.05},
+        "min_task_clock_s": {"type": "number", "minimum": 0}
+      }
+    },
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_bytes", "pids_max"],
+      "properties": {
+        "max_bytes": {"type": "integer", "minimum": 1},
+        "pids_max": {"type": "integer", "minimum": 1}
+      }
+    },
+    "interference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_fraction", "floor_ms", "jiffy_ms"],
+      "properties": {
+        "max_fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.1},
+        "floor_ms": {"type": "number", "minimum": 0},
+        "jiffy_ms": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "energy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rapl_domain"],
+      "properties": {"rapl_domain": {"type": ["string", "null"]}}
+    },
+    "sandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user_prefix", "homes", "tmp_bytes"],
+      "properties": {
+        "user_prefix": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,7}$"},
+        "homes": {"type": "string"},
+        "tmp_bytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "timeouts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["box_factor", "default_s", "minimum_s"],
+      "properties": {
+        "box_factor": {"$ref": "#/definitions/nullable_positive"},
+        "default_s": {"type": "number", "exclusiveMinimum": 0},
+        "minimum_s": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "repetitions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scored", "heavy", "verdict_only", "failure"],
+      "properties": {
+        "scored": {
+          "type": "object", "additionalProperties": false,
+          "required": ["n_min", "n_max", "ci_rel", "confidence"],
+          "properties": {
+            "n_min": {"type": "integer", "minimum": 6},
+            "n_max": {"type": "integer", "minimum": 6},
+            "ci_rel": {"type": "number", "exclusiveMinimum": 0},
+            "confidence": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1}
+          }
+        },
+        "heavy": {
+          "type": "object", "additionalProperties": false,
+          "required": ["threshold_s", "n_min", "n_max", "spread_rel"],
+          "properties": {
+            "threshold_s": {"type": "number", "exclusiveMinimum": 0},
+            "n_min": {"type": "integer", "minimum": 1},
+            "n_max": {"type": "integer", "minimum": 1},
+            "spread_rel": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        "verdict_only": {
+          "type": "object", "additionalProperties": false, "required": ["n"],
+          "properties": {"n": {"type": "integer", "minimum": 1}}
+        },
+        "failure": {
+          "type": "object", "additionalProperties": false, "required": ["n"],
+          "properties": {"n": {"type": "integer", "minimum": 1}}
+        }
+      }
+    },
+    "sentinel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checker", "test", "every_s", "limits"],
+      "properties": {
+        "checker": {"type": "string"},
+        "test": {"type": "string"},
+        "every_s": {"type": "number", "exclusiveMinimum": 0},
+        "limits": {
+          "anyOf": [
+            {"type": "null"},
+            {
+              "type": "object", "additionalProperties": false, "required": ["mean_s", "sigma_s", "k"],
+              "properties": {
+                "mean_s": {"type": "number", "exclusiveMinimum": 0},
+                "sigma_s": {"type": "number", "minimum": 0},
+                "k": {"type": "number", "exclusiveMinimum": 0}
+              }
+            }
+          ]
+        }
+      }
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "tests", "checkers", "results", "acct", "helper", "shim"],
+      "properties": {
+        "state": {"type": "string"},
+        "tests": {"type": "string"},
+        "checkers": {"type": "string"},
+        "results": {"type": "string"},
+        "acct": {"type": "string"},
+        "helper": {"type": "string"},
+        "shim": {"type": "string"}
+      }
+    }
+  }
+}

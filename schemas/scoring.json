@@ -1,0 +1,129 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Quiet-board scoring rules",
+  "description": "One season's rules: what is measured, how tests are grouped and weighted, how failures and uncertainty are scored.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "season", "reference", "unranked", "floors", "failure_factor", "caps", "metrics", "families", "categories", "pareto", "scaling", "bootstrap", "sensitivity"],
+  "definitions": {
+    "weights": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"type": "number", "exclusiveMinimum": 0}
+    }
+  },
+  "properties": {
+    "schema": {"const": "lka-quiet-scoring/1"},
+    "season": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "reference": {"type": "string"},
+    "unranked": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "floors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wall_s", "memory_bytes", "energy_j"],
+      "properties": {
+        "wall_s": {"type": "number", "exclusiveMinimum": 0},
+        "memory_bytes": {"type": "number", "exclusiveMinimum": 0},
+        "energy_j": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "failure_factor": {"type": "number", "minimum": 1},
+    "caps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["memory_bytes", "power_w"],
+      "properties": {
+        "memory_bytes": {"type": "integer", "minimum": 1},
+        "power_w": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["lane", "quantity", "title", "unit"],
+        "properties": {
+          "lane": {"type": "string"},
+          "quantity": {"enum": ["wall_s", "memory_bytes", "energy_j"]},
+          "title": {"type": "string"},
+          "unit": {"type": "string"}
+        }
+      }
+    },
+    "families": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "tests"],
+        "properties": {
+          "title": {"type": "string"},
+          "description": {"type": "string"},
+          "tests": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "anyOf": [
+                {"type": "string"},
+                {
+                  "type": "object", "additionalProperties": false, "required": ["name", "weight"],
+                  "properties": {"name": {"type": "string"}, "weight": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}}
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "categories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "description", "metrics", "families"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+          "title": {"type": "string"},
+          "description": {"type": "string"},
+          "metrics": {"$ref": "#/definitions/weights"},
+          "families": {"$ref": "#/definitions/weights"}
+        }
+      }
+    },
+    "pareto": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "scaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["serial", "parallel", "parallel_cpus", "category"],
+      "properties": {
+        "serial": {"type": "string"},
+        "parallel": {"type": "string"},
+        "parallel_cpus": {"type": "integer", "minimum": 1},
+        "category": {"type": "string"}
+      }
+    },
+    "bootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["replicates", "seed", "confidence"],
+      "properties": {
+        "replicates": {"type": "integer", "minimum": 100},
+        "seed": {"type": "string"},
+        "confidence": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1}
+      }
+    },
+    "sensitivity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "factors"],
+      "properties": {
+        "category": {"type": "string"},
+        "factors": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 1}
+      }
+    }
+  }
+}

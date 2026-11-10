@@ -1,0 +1,8 @@
+#!/usr/bin/python3
+"""The one program the board's runner may start as root: see lka_quiet/helper.py."""
+import sys
+
+sys.path.insert(0, "/usr/local/lib/lka")
+from lka_quiet.helper import main  # noqa: E402
+
+sys.exit(main(sys.argv))

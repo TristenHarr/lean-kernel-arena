@@ -1,0 +1,105 @@
+# Season 1 of the quiet board: the rules, fixed before any result of the season exists.
+# Changing anything here starts a new season; results of different seasons are not compared.
+schema: lka-quiet-scoring/1
+season: season-1
+
+# Every score is relative to Lean's own kernel. The order of the board does not depend on this
+# choice; the "N x better" figures do.
+reference: official
+unranked: [official, parse-only]
+
+# Below these, differences are not noticeable to anyone using a checker.
+floors:
+  wall_s: 0.02
+  memory_bytes: 33554432     # 32 MiB
+  energy_j: 0.1
+
+# A good test a checker does not accept (timeout, error, decline, OOM) scores twice the cap
+# (PAR-2, as in the SAT Competition).
+failure_factor: 2
+caps:
+  memory_bytes: 16106127360  # the memory limit of a run
+  power_w: 25                # the N100 package's power ceiling
+
+metrics:
+  T4: {lane: 4core, quantity: wall_s, title: "Wall time, 4 cores", unit: s}
+  T1: {lane: 1core, quantity: wall_s, title: "Wall time, 1 core", unit: s}
+  M: {lane: 4core, quantity: memory_bytes, title: "Peak memory", unit: B}
+  E: {lane: 4core, quantity: energy_j, title: "Energy", unit: J}
+
+# Only tests that should be accepted are scored for performance; bad tests and corner cases
+# count for correctness alone.
+families:
+  libraries:
+    title: Libraries
+    description: Whole libraries, as users check them. Mathlib carries half the family.
+    tests:
+      - {name: mathlib, weight: 0.5}
+      - init
+      - std
+      - cslib
+      - cedar
+      - con-leche
+      - navier-stokes-euler
+      - reachability
+  stress:
+    title: Stress
+    description: Inputs built to expose bad asymptotics.
+    tests: ["perf/*"]
+  interactive:
+    title: Interactive
+    description: Small files, where start-up and per-declaration overhead dominate.
+    tests: [init-prelude, "tutorial/*", "other/*", "corner-cases/*"]
+  mathlib:
+    title: Mathlib
+    tests: [mathlib]
+
+categories:
+  - id: overall
+    title: Overall
+    description: Every metric over every family.
+    metrics: {T4: 0.35, T1: 0.25, M: 0.25, E: 0.15}
+    families: {libraries: 0.5, stress: 0.3, interactive: 0.2}
+  - id: multi-core
+    title: Multi-core speed
+    description: Wall time with the whole machine.
+    metrics: {T4: 1}
+    families: {libraries: 0.5, stress: 0.3, interactive: 0.2}
+  - id: single-core
+    title: Single-core speed
+    description: Wall time on one core.
+    metrics: {T1: 1}
+    families: {libraries: 0.5, stress: 0.3, interactive: 0.2}
+  - id: memory
+    title: Memory
+    description: Peak memory of every process of the checker together.
+    metrics: {M: 1}
+    families: {libraries: 0.5, stress: 0.3, interactive: 0.2}
+  - id: energy
+    title: Energy
+    description: Package energy with the whole machine.
+    metrics: {E: 1}
+    families: {libraries: 0.5, stress: 0.3, interactive: 0.2}
+  - id: robustness
+    title: Robustness
+    description: Speed on the stress tests, on one core and on four.
+    metrics: {T4: 0.5, T1: 0.5}
+    families: {stress: 1}
+  - id: startup
+    title: Start-up
+    description: Speed on small files.
+    metrics: {T4: 1}
+    families: {interactive: 1}
+  - id: mathlib
+    title: Mathlib
+    description: Every metric on Mathlib alone.
+    metrics: {T4: 0.35, T1: 0.25, M: 0.25, E: 0.15}
+    families: {mathlib: 1}
+
+pareto: [multi-core, single-core, memory, energy]
+
+scaling: {serial: 1core, parallel: 4core, parallel_cpus: 4, category: overall}
+
+bootstrap: {replicates: 2000, seed: season-1, confidence: 0.95}
+
+sensitivity: {category: overall, factors: [0.5, 1.5]}
