@@ -225,7 +225,10 @@ def cmd_quiet_measure(args, lka) -> int:
     if args.test:
         tests = [t for t in tests if any(fnmatch.fnmatch(t["name"], p) for p in args.test)]
     all_checkers = _checkers(lka, None)
-    checkers = [c for c in all_checkers if not args.checker or fnmatch.fnmatch(c["name"], args.checker)]
+    built, not_built = built_checkers(all_checkers, load_builds(Path(args.results), epoch))
+    if not_built:
+        print(f"not built at their current source, so not measured: {', '.join(c['name'] for c in not_built)}")
+    checkers = [c for c in built if not args.checker or fnmatch.fnmatch(c["name"], args.checker)]
     env = run_env(os.environ)
     measure = _helper_measure(args.helper.split())
     store = RunStore(Path(args.results), epoch=epoch)
@@ -240,6 +243,56 @@ def cmd_quiet_measure(args, lka) -> int:
     return 0 if summary["outcome"] in ("complete", "budget") else 3
 
 
+def _builds_dir(results: Path, epoch: str) -> Path:
+    return Path(results) / epoch / "builds"
+
+
+def load_builds(results: Path, epoch: str) -> dict:
+    directory = _builds_dir(results, epoch)
+    if not directory.exists():
+        return {}
+    return {p.stem: json.loads(p.read_text()) for p in sorted(directory.glob("*.json"))}
+
+
+def built_checkers(checkers, builds: dict) -> tuple[list, list]:
+    """The checkers whose current source built, and those that did not (or were never built)."""
+    ok, not_built = [], []
+    for checker in checkers:
+        record = builds.get(checker["name"])
+        if record and record.get("ok") and record.get("source_hash") == checker["source_hash"]:
+            ok.append(checker)
+        else:
+            not_built.append(checker)
+    return ok, not_built
+
+
+def cmd_quiet_build(args, lka) -> int:
+    import fnmatch
+    epoch = Path(args.epoch_file).read_text().strip()
+    checkers = [c for c in _checkers(lka, None) if fnmatch.fnmatch(c["name"], args.checker)]
+    builds = load_builds(Path(args.results), epoch)
+    directory = _builds_dir(Path(args.results), epoch)
+    directory.mkdir(parents=True, exist_ok=True)
+    failed = 0
+    for checker in checkers:
+        previous = builds.get(checker["name"])
+        if not args.force and previous and previous.get("ok") and previous.get("source_hash") == checker["source_hash"]:
+            print(f"{checker['name']}: built already at {checker['source_hash'][:12]}")
+            continue
+        request = {"checker": checker["name"], "arena": args.arena, "timeout_s": args.timeout_hours * 3600}
+        result = subprocess.run(args.helper.split() + ["--build"], input=json.dumps(request), capture_output=True, text=True)
+        try:
+            record = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            record = {"checker": checker["name"], "ok": False, "exit_code": result.returncode,
+                      "log_tail": result.stderr[-16384:]}
+        record.update({"source_hash": checker["source_hash"], "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+        (directory / f"{checker['name']}.json").write_text(json.dumps(record, indent=1, sort_keys=True) + "\n")
+        failed += not record["ok"]
+        print(f"{checker['name']}: {'built' if record['ok'] else 'FAILED'} in {record.get('duration_s', 0):.0f} s")
+    return 1 if failed else 0
+
+
 def cmd_quiet_score(args, lka) -> int:
     import yaml
     scoring = yaml.safe_load(Path(args.season).read_text())
@@ -249,6 +302,11 @@ def cmd_quiet_score(args, lka) -> int:
     checkers = _checkers(lka, None)
     board = score_store(RunStore(Path(args.results), epoch=epoch), tests, checkers, scoring, machine)
     board["tests"] = tests
+    builds = load_builds(Path(args.results), epoch)
+    board["builds"] = {c["name"]: {k: builds.get(c["name"], {}).get(k) for k in ("ok", "source_hash", "built_at", "duration_s")}
+                       for c in checkers}
+    board["checker_meta"] = {c["name"]: {k: c.get(k) for k in ("url", "ref", "rev", "version", "threads", "declines")}
+                             for c in checkers}
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(board, indent=1, sort_keys=True) + "\n")
     print(f"scored {len(board['checkers'])} checkers, {board['progress']['measured']}/{board['progress']['needed']} cells")
@@ -282,6 +340,15 @@ def add_parsers(subparsers) -> None:
     measure.add_argument("--calibrating", action="store_true", help="Measure before the machine is calibrated")
     measure.add_argument("--no-sentinel", action="store_true")
 
+    build = subparsers.add_parser("quiet-build", help="Build checkers on the quiet box, each as its own user")
+    build.add_argument("--checker", default="*", help="Glob of checkers to build (default: all)")
+    build.add_argument("--arena", default="/srv/lka/arena", help="The staged arena tree to build from")
+    build.add_argument("--results", required=True, help="Results store directory (build records are kept there)")
+    build.add_argument("--epoch-file", default="/etc/lka/epoch")
+    build.add_argument("--timeout-hours", type=float, default=3.0)
+    build.add_argument("--force", action="store_true", help="Rebuild even if this source built already")
+    build.add_argument("--helper", default="sudo -n /usr/local/libexec/lka/lka-measure")
+
     score = subparsers.add_parser("quiet-score", help="Score a quiet-board results store into board.json")
     score.add_argument("--season", required=True, help="Scoring rules (scoring/*.yaml)")
     score.add_argument("--machine", required=True, help="Machine profile (machines/*.yaml)")
@@ -292,4 +359,5 @@ def add_parsers(subparsers) -> None:
     score.add_argument("--out", default="_build/board.json")
 
 
-COMMANDS = {"quiet-stage": cmd_quiet_stage, "quiet-measure": cmd_quiet_measure, "quiet-score": cmd_quiet_score}
+COMMANDS = {"quiet-stage": cmd_quiet_stage, "quiet-build": cmd_quiet_build, "quiet-measure": cmd_quiet_measure,
+            "quiet-score": cmd_quiet_score}

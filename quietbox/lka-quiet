@@ -1,0 +1,20 @@
+#!/usr/bin/python3
+"""lka-quiet on|off|status: enter or leave the quiet state (see lka_quiet/quiet.py). Root only."""
+import json
+import os
+import sys
+
+sys.path.insert(0, "/usr/local/lib/lka")
+from lka_quiet import quiet  # noqa: E402
+
+if os.geteuid() != 0 or len(sys.argv) != 2 or sys.argv[1] not in ("on", "off", "status"):
+    sys.exit("usage (as root): lka-quiet on|off|status")
+command = sys.argv[1]
+if command == "status":
+    print("quiet" if quiet.SNAPSHOT_FILE.exists() else "not quiet")
+    sys.exit(0)
+machine = json.loads(open(os.environ.get("LKA_MACHINE", "/etc/lka/machine.json")).read())
+problems = quiet.enter(machine) if command == "on" else quiet.leave()
+for problem in problems:
+    print(f"lka-quiet {command}: {problem}", file=sys.stderr)
+print(f"lka-quiet {command}: done, {len(problems)} item(s) the kernel kept as they were")

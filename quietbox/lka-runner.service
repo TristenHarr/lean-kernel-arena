@@ -1,0 +1,15 @@
+[Unit]
+Description=Quiet board GitHub runner (one just-in-time registration per job)
+After=network-online.target nix-daemon.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/libexec/lka/jit-runner.sh
+Restart=always
+RestartSec=10
+# The runner waits on GitHub between jobs; it keeps to the housekeeping CPU like the rest of the system.
+AllowedCPUs=0
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lka_quiet.cli import StageError, run_env, score_store, stage_tests
+from lka_quiet.cli import StageError, built_checkers, run_env, score_store, stage_tests
 from lka_quiet.session import RunStore
 
 
@@ -170,3 +170,14 @@ class Scoring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Builds(unittest.TestCase):
+    def test_only_the_current_source_counts_as_built(self):
+        checkers = [{"name": "a", "source_hash": "h1"}, {"name": "b", "source_hash": "h2"},
+                    {"name": "c", "source_hash": "h3"}, {"name": "d", "source_hash": "h4"}]
+        builds = {"a": {"ok": True, "source_hash": "h1"}, "b": {"ok": True, "source_hash": "old"},
+                  "c": {"ok": False, "source_hash": "h3"}}
+        ok, not_built = built_checkers(checkers, builds)
+        self.assertEqual([c["name"] for c in ok], ["a"])
+        self.assertEqual([c["name"] for c in not_built], ["b", "c", "d"])

@@ -61,13 +61,13 @@ sentinel:
   checker: official
   test: init-prelude
   every_s: 7200
-  limits: null               # calibrated: mean and 3-sigma band of the sentinel's wall time
+  limits: null               # calibrated: mean, sample sigma and k of the sentinel's wall time (k sigma band)
 
 paths:
   state: /srv/lka
   tests: /srv/lka/tests
   checkers: /srv/lka/checkers
   results: /srv/lka/results
-  acct: /var/log/lka/pacct
+  acct: /var/log/account/pacct
   helper: /usr/local/libexec/lka/lka-measure
   shim: /usr/local/libexec/lka/lka-shim

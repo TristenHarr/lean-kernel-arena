@@ -1,0 +1,137 @@
+# The Quiet Board: every checker built and measured on a dedicated quiet machine through its self-hosted
+# runner, then scored and published from a GitHub-hosted runner. Inert unless the repository variable
+# QUIET_BOARD is "on" (it is never set upstream). Never triggered by pull requests: no code from a fork
+# runs on the quiet box.
+name: Quiet board
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      checkers:
+        description: Glob of checkers to build and measure
+        default: "*"
+      budget_hours:
+        description: Hours of measurement in this run
+        default: "20"
+  push:
+    branches: [master]
+    paths:
+      - "checkers/**"
+      - "tests/**"
+      - "lka_quiet/**"
+      - "quietbox/**"
+      - "machines/**"
+      - "scoring/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quiet-board
+  cancel-in-progress: false
+
+env:
+  MACHINE: machines/n100-quiet.yaml
+  SEASON: scoring/season-1.yaml
+  STATE: /srv/lka
+
+jobs:
+  measure:
+    if: vars.QUIET_BOARD == 'on'
+    runs-on: [self-hosted, linux, x64, lka-n100-quiet]
+    timeout-minutes: 1440
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage the arena tree the checkers build from
+        run: rsync -a --delete --exclude=.git --exclude=_build --exclude=_out --exclude=_results ./ "$STATE/arena/"
+
+      - name: Stage the official round's inputs
+        run: |
+          curl -fsSL -o "$STATE/published/results.json" https://arena.lean-lang.org/results.json
+          curl -fsSL -o "$STATE/published/lean-arena-tests.tar.gz" https://arena.lean-lang.org/lean-arena-tests.tar.gz
+          nix develop --command python3 lka.py quiet-stage --published "$STATE/published" \
+            --source "$STATE/exports" --store "$STATE/tests" --manifest "$STATE/manifest.json" --allow-mismatch cedar
+
+      - name: Build the checkers whose source changed
+        run: |
+          nix develop --command python3 lka.py quiet-build --checker "${{ inputs.checkers || '*' }}" \
+            --results "$STATE/results" || echo "::warning::some checkers did not build; they are not measured"
+
+      - name: Quiet the machine
+        run: sudo -n /usr/local/libexec/lka/lka-quiet on
+
+      - name: Preflight
+        run: sudo -n /usr/local/libexec/lka/lka-preflight --check
+
+      - name: Measure
+        run: |
+          nix develop --command python3 lka.py quiet-measure --machine "$MACHINE" --manifest "$STATE/manifest.json" \
+            --results "$STATE/results" --round "$(date -u +%Y-%m)" --checker "${{ inputs.checkers || '*' }}" \
+            --budget-hours "${{ inputs.budget_hours || '20' }}"
+
+      - name: Leave the quiet state
+        if: always()
+        run: sudo -n /usr/local/libexec/lka/lka-quiet off
+
+      - name: Score
+        run: |
+          nix develop --command python3 lka.py quiet-score --season "$SEASON" --machine "$MACHINE" \
+            --manifest "$STATE/manifest.json" --results "$STATE/results" --epoch-file /etc/lka/epoch --out board.json
+          tar -C "$STATE/results" -cJf quiet-results.tar.xz "$(cat /etc/lka/epoch)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quiet-board
+          path: |
+            board.json
+            quiet-results.tar.xz
+          retention-days: 30
+
+  publish:
+    needs: measure
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: quiet-board
+      - name: Site dependencies
+        run: python3 -m pip install --quiet jinja2 jsonschema markdown pyyaml
+      - name: Check the board
+        run: |
+          python3 - <<'EOF'
+          import json
+          from lka_quiet.board import BOARD_SCHEMA
+          board = json.load(open("board.json"))
+          assert board["schema"] == BOARD_SCHEMA, board["schema"]
+          assert board["checkers"], "no checkers"
+          print(f"{board['epoch']}: {board['progress']['measured']}/{board['progress']['needed']} cells")
+          EOF
+      - name: Build the site
+        run: |
+          curl -fsSL -o official-results.json https://arena.lean-lang.org/results.json
+          python3 lka.py build-site --outdir _out --results official-results.json --board board.json --machine "$MACHINE"
+      - name: Publish the raw runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          epoch="$(python3 -c 'import json; print(json.load(open("board.json"))["epoch"])')"
+          gh release view "quiet-$epoch" >/dev/null 2>&1 || \
+            gh release create "quiet-$epoch" --title "Quiet board runs, epoch $epoch" \
+              --notes "Every run record of machine epoch $epoch. Re-score with lka.py quiet-score."
+          gh release upload "quiet-$epoch" quiet-results.tar.xz board.json --clobber
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _out
+      - id: deploy
+        uses: actions/deploy-pages@v4

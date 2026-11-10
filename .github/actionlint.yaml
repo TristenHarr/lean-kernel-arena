@@ -5,3 +5,4 @@ self-hosted-runner:
     - nscloud-ubuntu-22.04-amd64-8x16-with-cache
     - nscloud-macos-sonoma-arm64-6x14
     - nscloud-cache-*
+    - lka-n100-quiet

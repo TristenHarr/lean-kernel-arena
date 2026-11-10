@@ -330,9 +330,10 @@ def measure_inside_scope(req: dict, machine: dict, scope: Path | None = None) ->
         shim = json.loads(status_path.read_text())
 
     acct = b""
-    if acct_offset is not None:
+    if acct_offset is not None and acct_path.exists():
         with open(acct_path, "rb") as f:
-            f.seek(acct_offset)
+            # a rotation during the run leaves a shorter, new file: then all of it is the run's
+            f.seek(acct_offset if acct_path.stat().st_size >= acct_offset else 0)
             acct = f.read()
 
     max_range = _read_int(Path(machine["energy"]["rapl_domain"]) / "max_energy_range_uj") \
@@ -384,6 +385,15 @@ def main(argv: list[str]) -> int:
         print("lka-measure must run as root", file=sys.stderr)
         return 2
     machine_path = os.environ.get("LKA_MACHINE", "/etc/lka/machine.json")
+    if "--build" in argv:
+        from .build import BuildError, run_build
+        try:
+            record = run_build(json.loads(sys.stdin.read()), json.loads(Path(machine_path).read_text()))
+        except (BuildError, json.JSONDecodeError, KeyError) as error:
+            print(f"lka-measure --build: {error}", file=sys.stderr)
+            return 2
+        sys.stdout.write(json.dumps(record, sort_keys=True) + "\n")
+        return 0 if record["ok"] else 1
     no_systemd = "--no-systemd" in argv
     if not no_systemd and "--inside" not in argv:
         scope = ["systemd-run", "--scope", "--quiet", "--collect", "--slice=lka.slice", "-p", "Delegate=yes",

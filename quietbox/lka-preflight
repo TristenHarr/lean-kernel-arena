@@ -1,0 +1,34 @@
+#!/usr/bin/python3
+"""lka-preflight --write | --check: fingerprint the machine into its epoch, and check it is quiet.
+
+--write records the machine's facts and epoch (/etc/lka/facts.json, /etc/lka/epoch); --check
+compares the facts with the recorded ones (any change is a new epoch, which must be written on
+purpose) and verifies the machine is quiet now. Root only. Exit status 0 when ready.
+"""
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "/usr/local/lib/lka")
+from lka_quiet.preflight import check_state, epoch_of, gather_facts, gather_state  # noqa: E402
+
+if os.geteuid() != 0 or len(sys.argv) != 2 or sys.argv[1] not in ("--write", "--check"):
+    sys.exit("usage (as root): lka-preflight --write | --check")
+machine = json.loads(Path(os.environ.get("LKA_MACHINE", "/etc/lka/machine.json")).read_text())
+facts = gather_facts()
+epoch = epoch_of(machine, facts)
+if sys.argv[1] == "--write":
+    Path("/etc/lka/facts.json").write_text(json.dumps(facts, indent=1, sort_keys=True) + "\n")
+    Path("/etc/lka/epoch").write_text(epoch + "\n")
+    print(f"epoch {epoch}")
+    sys.exit(0)
+recorded = Path("/etc/lka/epoch").read_text().strip() if Path("/etc/lka/epoch").exists() else None
+problems = []
+if recorded != epoch:
+    before = json.loads(Path("/etc/lka/facts.json").read_text()) if Path("/etc/lka/facts.json").exists() else {}
+    changed = sorted(k for k in set(before) | set(facts) if before.get(k) != facts.get(k))
+    problems.append(f"the machine changed since epoch {recorded} ({', '.join(changed)}): write a new epoch on purpose")
+problems += check_state(gather_state(), machine)
+print(json.dumps({"epoch": epoch, "problems": problems}, indent=1))
+sys.exit(1 if problems else 0)
