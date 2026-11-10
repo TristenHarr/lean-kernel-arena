@@ -1,12 +1,18 @@
 """The quiet board's pages: built from board.json beside the arena's own site, under quiet/.
 
     quiet/                     the board: leaders, the overall ranking, correctness, trade-offs
-    quiet/category/<id>/       one category: its ranking, rank intervals and head-to-head matrix
+    quiet/category/<id>/       one category: its places, their ranges and head-to-head matrix
+    quiet/pareto/              the Pareto fronts: every pair of Pareto categories, the layers, Mathlib and
+                               each library in seconds and bytes
+    quiet/libraries/           every library: each checker's time on four cores and on one, memory, instructions
+    quiet/tests/               every test and every checker's verdict on it, as the Arena tabulates them
+    quiet/test/<name>/         one test: each checker's measurements, with the spread of its runs
     quiet/checker/<name>/      one checker: every category, every test, every metric
     quiet/methodology/         how it is measured and scored, with the season's rules
     quiet/board.json           the data every page is drawn from
 """
 
+import itertools
 import json
 import math
 from pathlib import Path
@@ -59,15 +65,39 @@ def fmt_instructions(n) -> str:
     return str(int(n))
 
 
+def fmt_time_tick(s) -> str:
+    """A round duration as an axis reads it: 500 ms, 30 s, 5 min, 2 h."""
+    if s < 1:
+        return f"{s * 1000:g} ms"
+    if s < 60:
+        return f"{s:g} s"
+    if s < 3600:
+        return f"{s / 60:g} min"
+    return f"{s / 3600:g} h"
+
+
+def fmt_bytes_tick(b) -> str:
+    """A power of two as an axis reads it: 512 MiB, 8 GiB."""
+    for unit, size in (("GiB", 2**30), ("MiB", 2**20), ("KiB", 2**10)):
+        if b >= size:
+            return f"{b / size:g} {unit}"
+    return f"{b:g} B"
+
+
+_AXES = {"wall_s": (charts.time_ticks, fmt_time_tick), "memory_bytes": (charts.byte_ticks, fmt_bytes_tick),
+          "instructions": (charts.log_ticks, fmt_instructions), "energy_j": (charts.log_ticks, fmt_joules)}
+
+
 def fmt_quantity(value, quantity: str) -> str:
     return {"wall_s": fmt_seconds, "memory_bytes": fmt_bytes, "energy_j": fmt_joules,
             "instructions": fmt_instructions}[quantity](value)
 
 
 def rank_label(result: dict) -> str:
-    if result.get("rank") is None:
+    """A checker's place in a category, "=" when it shares it."""
+    if result.get("place") is None:
         return "–"
-    return f"{result['rank']}=" if result.get("tied") else str(result["rank"])
+    return f"{result['place']}=" if result.get("place_tied") else str(result["place"])
 
 
 def interval_text(result: dict) -> str:
@@ -156,6 +186,213 @@ def unranked(board, category_id: str, baselines=()) -> list[dict]:
     return out
 
 
+def _pareto_categories(board, season) -> list[str]:
+    rendered = {c["id"] for c in board["categories"]}
+    return [c for c in season.get("pareto", []) if c in rendered]
+
+
+def _titles(board) -> dict:
+    return {c["id"]: c["title"] for c in board["categories"]}
+
+
+def pair_views(board, season) -> list[dict]:
+    """Every pair of the season's Pareto categories: each ranked checker's two factors and the
+    front of that pair alone."""
+    titles = _titles(board)
+    views = []
+    for a, b in itertools.combinations(_pareto_categories(board, season), 2):
+        points = []
+        for entry in board["checkers"]:
+            fa, fb = entry["categories"][a].get("factor"), entry["categories"][b].get("factor")
+            if entry["ranked"] and fa and fb:
+                points.append({"name": entry["name"], "x": fa, "y": fb})
+        views.append({"x": a, "y": b, "x_title": titles[a], "y_title": titles[b], "points": pareto_2d(points)})
+    return views
+
+
+def _dominates(u, v) -> bool:
+    return all(a <= b for a, b in zip(u, v)) and any(a < b for a, b in zip(u, v))
+
+
+def layer_rows(board, season) -> list[dict]:
+    """The ranked checkers by Pareto layer, then by overall place; each with the checkers that beat
+    it on every Pareto category at once."""
+    cats = _pareto_categories(board, season)
+    entries = [e for e in board["checkers"] if e.get("pareto_layer")]
+    vectors = {e["name"]: [e["categories"][c]["score"] for c in cats] for e in entries}
+
+    def key(e):
+        place = e["categories"].get("overall", {}).get("place")
+        return (e["pareto_layer"], place if place is not None else math.inf, e["name"])
+
+    ordered = sorted(entries, key=key)
+    rows = []
+    for e in ordered:
+        beaten_by = [d["name"] for d in ordered if _dominates(vectors[d["name"]], vectors[e["name"]])]
+        closest = [d for d in beaten_by if not any(_dominates(vectors[d], vectors[o]) for o in beaten_by)]
+        rows.append({"name": e["name"], "layer": e["pareto_layer"],
+                     "factors": {c: e["categories"][c]["factor"] for c in cats},
+                     "dominated_by": beaten_by, "closest": closest})
+    return rows
+
+
+def parallel_rows(board, season) -> list[dict]:
+    cats = _pareto_categories(board, season)
+    rows = []
+    for entry in board["checkers"]:
+        factors = {c: entry["categories"][c].get("factor") for c in cats}
+        if entry["ranked"] and cats and all(factors.values()):
+            rows.append({"name": entry["name"], "values": factors, "front": entry["pareto"]})
+    return rows
+
+
+def _front_min(points):
+    """Mark each point not dominated in both coordinates (smaller is better)."""
+    for p in points:
+        p["pareto"] = not any(
+            q is not p and q["x"] <= p["x"] and q["y"] <= p["y"] and (q["x"] < p["x"] or q["y"] < p["y"])
+            for q in points)
+    return points
+
+
+def absolute_points(board, test: str, x_metric: str, y_metric: str) -> list[dict]:
+    """One test's two measurements, in their own units, for every ranked checker and the
+    reference; the front is taken with less as better on both."""
+    points = []
+    for entry in board["checkers"]:
+        if not (entry["ranked"] or entry["reference"]):
+            continue
+        cells = entry.get("tests", {}).get(test, {})
+        cx, cy = cells.get(x_metric), cells.get(y_metric)
+        if cx and cy and not cx["failed"] and not cy["failed"] and cx["value"] and cy["value"]:
+            points.append({"name": entry["name"], "x": cx["value"], "y": cy["value"]})
+    return _front_min(points)
+
+
+def _checker_order(board) -> list[str]:
+    overall = next((c for c in board["categories"] if c["id"] == "overall"), None)
+    return list(overall["order"]) if overall else [e["name"] for e in board["checkers"]]
+
+
+_FAILURES = {"declined": "declined", "timeout": "out of time", "error": "error", "rejected": "rejected"}
+
+
+def _row_note(entry) -> str | None:
+    if entry["reference"]:
+        return "reference"
+    if entry["gates"]["unsound"]:
+        return "unsound"
+    if entry["gates"]["wrong_rejects"]:
+        return "incomplete"
+    if not entry["ranked"]:
+        return "not ranked"
+    return None
+
+
+def library_matrix(board, metric: str) -> dict:
+    """Each checker's measurement on each library, the libraries in the season's order, the
+    checkers in the overall order. A ranked checker's cell is shaded by its place among the ranked
+    checkers on that library; the others are shown unshaded, with the reason they are not ranked,
+    and a failure says what it was."""
+    family = board["families"].get("libraries", {"members": []})
+    libraries = [name for name, _ in family["members"]]
+    quantity = board["metrics"][metric]["quantity"]
+    entries = _entries(board)
+    columns = {}
+    for library in libraries:
+        cells = (entries[n].get("tests", {}).get(library, {}).get(metric) for n in entries if entries[n]["ranked"])
+        columns[library] = sorted(c["value"] for c in cells if c and not c["failed"] and c["value"])
+    rows = []
+    for name in _checker_order(board):
+        entry = entries[name]
+        cells = []
+        for library in libraries:
+            cell = entry.get("tests", {}).get(library, {}).get(metric)
+            if cell is None:
+                cells.append({"text": "–", "failed": False, "factor": None, "q": None, "test": library})
+            elif cell["failed"]:
+                status = entry.get("verdicts", {}).get(library)
+                cells.append({"text": _FAILURES.get(status, "failed"), "failed": True, "factor": None, "q": None,
+                              "test": library})
+            else:
+                q = None
+                ranked = columns[library]
+                if entry["ranked"] and cell["value"] in ranked:
+                    place = ranked.index(cell["value"])
+                    goodness = 1.0 if len(ranked) < 2 else (len(ranked) - 1 - place) / (len(ranked) - 1)
+                    q = charts.seq_step(goodness)
+                cells.append({"text": fmt_quantity(cell["value"], quantity), "failed": False,
+                              "factor": (1 / cell["ratio"]) if cell.get("ratio") else None, "q": q, "test": library})
+        if any(c["text"] != "–" for c in cells):
+            rows.append({"name": name, "cells": cells, "reference": entry["reference"], "note": _row_note(entry)})
+    return {"libraries": libraries, "metric": metric, "title": board["metrics"][metric]["title"], "rows": rows}
+
+
+_GLYPHS = {"correct": "✓", "wrong": "✗", "declined": "–", "timeout": "⏱", "error": "!", None: ""}
+
+
+def _verdict_kind(outcome, status) -> str | None:
+    if status is None:
+        return None
+    if status in ("declined", "error", "timeout"):
+        return "declined"
+    if outcome == "accept":
+        return "correct" if status == "accepted" else "wrong"
+    if outcome == "reject":
+        return "correct" if status == "rejected" else "wrong"
+    return "correct"
+
+
+def test_groups(board) -> list[dict]:
+    """Every test and every checker's verdict on it, grouped as the Arena groups them (by the part
+    of the name before its first slash; whole libraries and other single tests first). The
+    reference is the first column, the others follow the overall order."""
+    entries = _entries(board)
+    reference = board["reference"]
+    columns = [reference] + [n for n in _checker_order(board) if n != reference]
+    groups: dict[str, list] = {}
+    for test in board.get("tests", []):
+        name = test["name"]
+        group = name.split("/", 1)[0] if "/" in name else ""
+        cells = []
+        for checker in columns:
+            status = entries[checker].get("verdicts", {}).get(name)
+            kind = _verdict_kind(test.get("outcome"), status)
+            timing = entries[checker].get("tests", {}).get(name, {}).get("T4")
+            if status == "accepted" and timing and not timing["failed"]:
+                text = fmt_seconds(timing["value"])
+            elif status in ("timeout", "error"):
+                text = _GLYPHS[status]
+            else:
+                text = _GLYPHS[kind]
+            cells.append({"checker": checker, "status": status, "kind": kind, "text": text})
+        groups.setdefault(group, []).append({"name": name, "outcome": test.get("outcome"), "cells": cells})
+    out = []
+    for group in sorted(groups, key=lambda g: (g != "", g)):
+        tests = groups[group]
+        summary = []
+        for i, checker in enumerate(columns):
+            kinds = [t["cells"][i]["kind"] for t in tests]
+            summary.append({"checker": checker, "correct": kinds.count("correct"), "wrong": kinds.count("wrong"),
+                            "declined": kinds.count("declined")})
+        out.append({"name": group, "tests": tests, "summary": summary})
+    return out
+
+
+def test_rows(board, test: str, metric: str, href_prefix: str) -> list[dict]:
+    """One test's measurement by every checker that ran it, for its bar chart."""
+    rows = []
+    for entry in board["checkers"]:
+        cell = entry.get("tests", {}).get(test, {}).get(metric)
+        if cell is None:
+            continue
+        kind = "reference" if entry["reference"] else "ranked" if entry["ranked"] else "unranked"
+        rows.append({"name": entry["name"], "value": None if cell["failed"] else cell["value"],
+                     "lo": cell.get("lo"), "hi": cell.get("hi"), "failed": cell["failed"], "kind": kind,
+                     "href": f"{href_prefix}checker/{entry['name']}/"})
+    return rows
+
+
 def pareto_2d(points):
     """Mark each point not dominated in both coordinates (bigger is better)."""
     for p in points:
@@ -181,7 +418,7 @@ def rank_grid(board) -> dict:
             if result["rank"] is None or ranked < 2:
                 cells.append({"text": "–", "q": None})
                 continue
-            goodness = (ranked - result["rank"]) / (ranked - 1)
+            goodness = (ranked - result["place"]) / (ranked - 1)
             cells.append({"text": rank_label(result), "q": charts.seq_step(goodness),
                           "title": f"{name}: rank {rank_label(result)} of {ranked} in {category['title']}, "
                                    f"interval {result['rank_lo']}–{result['rank_hi']}"})
@@ -331,6 +568,80 @@ def render(board: dict, season: dict, machine: dict, env, outdir: Path, build_in
             **common, "root_path": "../../../", "quiet_root": "../../", "nav": "checkers", "entry": entry,
             "meta": board.get("checker_meta", {}).get(entry["name"], {}),
             "strips": strips, "tests": checker_tests(board, entry, season),
+        }).dump(str(directory / "index.html"))
+
+    def page(*parts) -> tuple[Path, str]:
+        directory = root.joinpath(*parts)
+        directory.mkdir(parents=True, exist_ok=True)
+        depth = sum(part.count("/") + 1 for part in parts)
+        return directory, "../" * depth
+
+    directory, prefix = page("pareto")
+    views = pair_views(board, season)
+    layers = layer_rows(board, season)
+    pareto_ids = _pareto_categories(board, season)
+    titles = _titles(board)
+    libraries = board["families"].get("libraries", {"members": []})["members"]
+    has = lambda metric: board["metrics"].get(metric, {}).get("available")
+    absolute = []
+    for test_name, _ in libraries:
+        for xm, ym in (("T4", "M"), ("T1", "M")):
+            if has(xm) and has(ym):
+                points = absolute_points(board, test_name, xm, ym)
+                ref = next((p for p in points if p["name"] == board["reference"]), None)
+                absolute.append({"test": test_name, "x": xm, "y": ym, "points": points, "svg": _svg(charts.pareto(
+                    points, title=f"{test_name}: {board['metrics'][xm]['title'].lower()} and peak memory",
+                    x_label=board["metrics"][xm]["title"].lower(), y_label="peak memory",
+                    better=("low", "low"), x_ticks=charts.time_ticks, y_ticks=charts.byte_ticks,
+                    x_format=fmt_time_tick, y_format=fmt_bytes_tick, x_value=fmt_seconds, y_value=fmt_bytes,
+                    labels="all" if test_name == "mathlib" else "front",
+                    reference=(ref["x"], ref["y"]) if ref else None,
+                    width=780 if test_name == "mathlib" else 380, height=500 if test_name == "mathlib" else 300))})
+    env.get_template("quiet/pareto.html").stream({
+        **common, "root_path": prefix + "../", "quiet_root": prefix, "nav": "pareto",
+        "parallel_svg": _svg(charts.parallel(parallel_rows(board, season), [(c, titles[c]) for c in pareto_ids],
+                                             title="Every Pareto category at once",
+                                             subtitle="Each line is a ranked checker, its factor on every axis; the front in colour")),
+        "pair_svgs": [{"view": v, "svg": _svg(charts.pareto(
+            v["points"], title=f"{v['x_title']} and {v['y_title']}", x_label=f"{v['x_title'].lower()} (× {board['reference']})",
+            y_label=f"{v['y_title'].lower()} (× {board['reference']})", width=380, height=320))} for v in views],
+        "layers": layers, "pareto_ids": pareto_ids, "titles": titles,
+        "mathlib_charts": [a for a in absolute if a["test"] == "mathlib"],
+        "library_charts": [a for a in absolute if a["test"] != "mathlib" and a["x"] == "T4"],
+    }).dump(str(directory / "index.html"))
+
+    directory, prefix = page("libraries")
+    env.get_template("quiet/libraries.html").stream({
+        **common, "root_path": prefix + "../", "quiet_root": prefix, "nav": "libraries",
+        "matrices": [library_matrix(board, m) for m in season["metrics"] if has(m)],
+    }).dump(str(directory / "index.html"))
+
+    directory, prefix = page("tests")
+    groups = test_groups(board)
+    env.get_template("quiet/tests.html").stream({
+        **common, "root_path": prefix + "../", "quiet_root": prefix, "nav": "tests",
+        "groups": groups, "columns": [c["checker"] for c in groups[0]["tests"][0]["cells"]] if groups else [],
+    }).dump(str(directory / "index.html"))
+
+    for test in board.get("tests", []):
+        directory, prefix = page("test", test["name"])
+        bars = []
+        for metric_id in season["metrics"]:
+            metric = board["metrics"].get(metric_id, {})
+            rows = test_rows(board, test["name"], metric_id, prefix)
+            if not metric.get("available") or not rows:
+                continue
+            ref = next((r["value"] for r in rows if r["name"] == board["reference"]), None)
+            ticks, tick_format = _AXES.get(metric["quantity"], (charts.log_ticks, None))
+            bars.append({"metric": metric, "svg": _svg(charts.value_bars(
+                rows, title=f"{test['name']}: {metric['title'].lower()}", reference=ref,
+                fmt=lambda v, q=metric["quantity"]: fmt_quantity(v, q), ticks=ticks, tick_format=tick_format))})
+        verdicts = [{"name": e["name"], "status": e.get("verdicts", {}).get(test["name"]),
+                     "kind": _verdict_kind(test.get("outcome"), e.get("verdicts", {}).get(test["name"]))}
+                    for e in board["checkers"]]
+        env.get_template("quiet/test.html").stream({
+            **common, "root_path": prefix + "../", "quiet_root": prefix, "nav": "tests", "test": test,
+            "bars": bars, "verdicts": verdicts,
         }).dump(str(directory / "index.html"))
 
     directory = root / "methodology"

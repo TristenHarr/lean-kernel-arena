@@ -5,9 +5,10 @@ and the test suite must fail on each.
     python3 tests_lka/mutants.py            # all mutants
     python3 tests_lka/mutants.py board      # those whose file matches
 
-Each mutant is applied to a scratch copy of the whole tree (build outputs aside); the working tree
-is never touched. The unmutated copy must pass first: a suite that fails on its own would kill
-every mutant and prove nothing. Exit status is the number of surviving mutants.
+The tree (build outputs aside) is copied once into a snapshot; the unmutated snapshot must pass
+first, since a suite that fails on its own would kill every mutant and prove nothing, and each
+mutant is applied to a fresh copy of that snapshot, so edits made to the working tree while the
+run goes on reach none of it. Exit status is the number of surviving mutants.
 """
 
 import shutil
@@ -100,7 +101,7 @@ MUTANTS = [
      "machine epochs are never mixed"),
     ("lka_quiet/board.py", "return values[(len(values) - 1) // 2]", "return sum(values) / len(values)",
      "cells are summarised by their median"),
-    ("lka_quiet/board.py", "and any(o < v for o, v in zip(other, vector))", "",
+    ("lka_quiet/board.py", "and any(a < b for a, b in zip(u, v))", "",
      "an equal vector does not dominate"),
     ("lka_quiet/board.py", "relative = None if logs[name] is None or ref_log is None else logs[name] - ref_log",
      "relative = logs[name]", "scores are relative to the reference"),
@@ -165,15 +166,45 @@ MUTANTS = [
      "the rank grid shades each category by its own field"),
     ("lka_quiet/site.py", "\"hi\": first[0][\"hi\"], \"ranked\": placed}", "\"hi\": first[0][\"hi\"], \"ranked\": len(rows)}",
      "a leader tile counts every placed checker"),
+    ("lka_quiet/board.py", "        if i and probabilities[order[i - 1]][name] < threshold:\n",
+     "        if i and probabilities[order[i - 1]][name] < 0.5:\n",
+     "a place is shared unless the checker above surely beats it"),
+    ("lka_quiet/board.py", "    threshold = 1 - (1 - confidence) / (2 * max(len(order) - 1, 1)) - 1e-12\n",
+     "    threshold = confidence\n", "places are corrected for the neighbouring comparisons"),
+    ("lka_quiet/board.py", "                    sample += [(test_name, share) for test_name in free]\n",
+     "                    sample += [(free[rng.below(len(free))], share) for _ in free]\n",
+     "only measurement noise ties a place, never a redraw of the tests"),
+    ("lka_quiet/board.py", "        ordered = sorted(contenders, key=lambda n: (keys[n], _file_order(n)))\n",
+     "        ordered = sorted(contenders, key=lambda n: (sets[n], _file_order(n)))\n",
+     "places follow the point estimates"),
+    ("lka_quiet/board.py", "            layers[name] = layer\n", "            layers[name] = 1\n",
+     "a dominated checker sits on a later Pareto layer"),
+    ("lka_quiet/board.py", "                \"n\": len(tv.values) if tv.values else 0,\n", "                \"n\": 1,\n",
+     "a cell reports how many runs it holds"),
+    ("lka_quiet/board.py", "                if tv.cdf is None or len(tv.cdf) == 1:\n",
+     "                if tv.cdf is not None or len(tv.cdf or ()) == 1:\n",
+     "the bootstrap redraws every cell with more than one run"),
+    ("lka_quiet/charts.py", "            path.append((front[k - 1][0], y))\n", "            path.append((x, front[k - 1][1]))\n",
+     "the staircase turns at the corner the front leaves dominated"),
+    ("lka_quiet/site.py", "q is not p and q[\"x\"] <= p[\"x\"] and q[\"y\"] <= p[\"y\"] and (q[\"x\"] < p[\"x\"] or q[\"y\"] < p[\"y\"])",
+     "q is not p and q[\"x\"] >= p[\"x\"] and q[\"y\"] >= p[\"y\"] and (q[\"x\"] > p[\"x\"] or q[\"y\"] > p[\"y\"])",
+     "in seconds and bytes, less is better"),
+    ("lka_quiet/site.py", "\"dominated_by\": [d[\"name\"] for d in ordered if _dominates(vectors[d[\"name\"]], vectors[e[\"name\"]])]",
+     "\"dominated_by\": [d[\"name\"] for d in ordered if _dominates(vectors[e[\"name\"]], vectors[d[\"name\"]])]",
+     "a layer row names the checkers that beat it, not those it beats"),
+    ("lka_quiet/site.py", "        return \"correct\" if status == \"rejected\" else \"wrong\"\n", "        return \"correct\"\n",
+     "accepting an invalid proof is marked wrong in the test table"),
+    ("lka_quiet/site.py", "(len(ranked) - 1 - place) / (len(ranked) - 1)", "place / (len(ranked) - 1)",
+     "a library cell is shaded darkest for the best"),
 ]
 
 
-def run_suite(mutant: tuple[str, str, str] | None) -> tuple[str, str]:
-    """The suite on a scratch copy of the tree with `mutant` (file, original, mutated) applied:
+def run_suite(snapshot: Path, mutant: tuple[str, str, str] | None) -> tuple[str, str]:
+    """The suite on a copy of `snapshot` with `mutant` (file, original, mutated) applied:
     ("pass" or "fail", its output), or ("broken", why) when the original text is not found once."""
     with tempfile.TemporaryDirectory(prefix="lka-mutant-") as tmp:
         copy = Path(tmp) / "tree"
-        shutil.copytree(ROOT, copy, ignore=SKIP)
+        shutil.copytree(snapshot, copy)
         if mutant:
             path, original, mutated = mutant
             target = copy / path
@@ -190,25 +221,28 @@ def run_suite(mutant: tuple[str, str, str] | None) -> tuple[str, str]:
 
 def main() -> int:
     selector = sys.argv[1] if len(sys.argv) > 1 else ""
-    verdict, output = run_suite(None)
-    if verdict != "pass":
-        print(output)
-        print("the suite fails on an unmutated copy of the tree; no mutant can be judged until it passes")
-        return 1
-    survivors = 0
-    chosen = [m for m in MUTANTS if selector in m[0]]
-    for path, original, mutated, promise in chosen:
-        verdict, output = run_suite((path, original, mutated))
-        if verdict == "broken":
-            print(f"BROKEN   {path}: {promise} ({output})")
-            survivors += 1
-        elif verdict == "fail":
-            print(f"killed   {path}: {promise}")
-        else:
-            print(f"SURVIVED {path}: {promise}")
-            survivors += 1
-    print(f"{len(chosen) - survivors}/{len(chosen)} mutants killed")
-    return survivors
+    with tempfile.TemporaryDirectory(prefix="lka-mutant-snapshot-") as tmp:
+        snapshot = Path(tmp) / "tree"
+        shutil.copytree(ROOT, snapshot, ignore=SKIP)
+        verdict, output = run_suite(snapshot, None)
+        if verdict != "pass":
+            print(output)
+            print("the suite fails on an unmutated copy of the tree; no mutant can be judged until it passes")
+            return 1
+        survivors = 0
+        chosen = [m for m in MUTANTS if selector in m[0]]
+        for path, original, mutated, promise in chosen:
+            verdict, output = run_suite(snapshot, (path, original, mutated))
+            if verdict == "broken":
+                print(f"BROKEN   {path}: {promise} ({output})")
+                survivors += 1
+            elif verdict == "fail":
+                print(f"killed   {path}: {promise}")
+            else:
+                print(f"SURVIVED {path}: {promise}")
+                survivors += 1
+        print(f"{len(chosen) - survivors}/{len(chosen)} mutants killed")
+        return survivors
 
 
 if __name__ == "__main__":

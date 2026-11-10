@@ -4,7 +4,8 @@
 <h1>Which Lean kernel checker is best, measured properly</h1>
 <p class="lede">Every Arena checker on one dedicated, silent machine: wall time on one core and on four, peak memory, energy and instructions,
 each the median of repeated runs that prove their own conditions, on real libraries, stress tests and small files, with the Arena's own order
-kept beside them. Ranks carry 95% intervals; checkers the data cannot separate share a rank.</p>
+kept beside them. A place follows the season's own suite; checkers whose runs cannot be told apart share it, and beside each place
+is the range a redrawn suite of tests could give it.</p>
 
 <dl class="strip">
     <div><dt>Season</dt><dd class="v">{{ board.season }}</dd></div>
@@ -38,14 +39,15 @@ kept beside them. Ranks carry 95% intervals; checkers the data cannot separate s
     <h2 id="overall">Overall</h2>
     <p class="section-note">One number per checker: the weighted geometric mean of its time on four cores and on one, its peak memory and its energy,
     against Lean's kernel, over whole libraries, stress tests and small files. A dot is the estimate, the bar its 95% interval.
-    A rank is taken only from checkers that are better in nearly every redraw of the data; "=" marks a rank shared with checkers the data cannot separate.
+    Places follow the estimates; "=" marks a place shared with a neighbour whose runs cannot be told apart. The last column is the range of places
+    a redrawn suite of tests could give: how much the place rests on which tests the suite holds.
     <a href="{{ quiet_root }}methodology/#uncertainty">How it is computed</a>.</p>
     <figure class="chart-card">
         <div class="scroll-x">{{ overall_svg }}</div>
         <figcaption>Ranked checkers only: sound, and never rejecting a valid proof. Reference line: {{ board.reference }}.</figcaption>
         <details class="twin"><summary>Table</summary>
             <table class="data">
-                <thead><tr><th>Rank</th><th>Checker</th><th class="n">Factor</th><th class="n">95% interval</th><th class="n">Places it can hold (95%)</th></tr></thead>
+                <thead><tr><th class="n">Place</th><th>Checker</th><th class="n">Factor</th><th class="n">95% interval</th><th class="n" title="The places a redrawn suite of tests could give it, at 95%">Under a redrawn suite</th></tr></thead>
                 <tbody>
                 {% for row in overall_rows %}
                 {% set result = board.checkers | selectattr('name', 'equalto', row.name) | first %}
@@ -95,19 +97,35 @@ kept beside them. Ranks carry 95% intervals; checkers the data cannot separate s
     <h2 id="correctness">Correctness</h2>
     <p class="section-note">Soundness comes first, as on the Arena: a checker that accepts one invalid proof, in any run on either lane, is not ranked;
     nor is one that rejects a valid proof. A crash is never a rejection: a process that dies of a signal or of memory makes the run an error,
-    whatever exit code a wrapper turns it into. Counts are from the 4-core lane.</p>
-    <div class="table-card">
-        <table class="data">
-            <thead><tr><th>Checker</th><th class="n">Valid proofs accepted</th><th class="n">Invalid proofs rejected</th>
-                <th class="n">Corner cases answered</th><th class="n">Declined or failed</th><th>Notes</th></tr></thead>
+    whatever exit code a wrapper turns it into. The table is the Arena's own, in the Arena's order, from this board's 4-core runs; every test's
+    verdicts are on the <a href="{{ quiet_root }}tests/">test table</a>.</p>
+    <div class="table-card scroll-x">
+        <table class="data" id="correctness-table">
+            <thead>
+            <tr><th rowspan="2" style="vertical-align: bottom;">Checker</th>
+                <th colspan="3" class="n" title="Invalid proofs, to be rejected">✋ invalid</th>
+                <th colspan="3" class="n" title="Valid proofs, to be accepted">👍 valid</th>
+                <th colspan="2" class="n" title="No expected outcome">🤷 either</th>
+                <th rowspan="2" class="n" style="vertical-align: bottom;" title="Median wall time on four cores, Mathlib">Mathlib</th>
+                <th rowspan="2" class="n" style="vertical-align: bottom;" title="Peak memory, Mathlib">Memory</th>
+                <th rowspan="2" style="vertical-align: bottom;">Notes</th></tr>
+            <tr><th class="n" title="Rejected">✅</th><th class="n" title="Accepted: unsound">❌</th><th class="n" title="Declined, failed or out of time">🚫</th>
+                <th class="n" title="Accepted">✅</th><th class="n" title="Rejected: incomplete">❌</th><th class="n" title="Declined, failed or out of time">🚫</th>
+                <th class="n" title="Answered">✅</th><th class="n" title="Declined, failed or out of time">🚫</th></tr>
+            </thead>
             <tbody>
-            {% for entry in board.checkers | sort(attribute='name') %}
+            {% set arena = categories | selectattr('id', 'equalto', 'arena') | list %}
+            {% set rows = arena[0].order if arena else (board.checkers | map(attribute='name') | sort) %}
+            {% for name in rows %}
+            {% set entry = board.checkers | selectattr('name', 'equalto', name) | first %}
             {% set c = entry.correctness %}
-            <tr><td><a href="{{ quiet_root }}checker/{{ entry.name }}/">{{ entry.name }}</a></td>
-                <td class="n">{{ c.good_accepted }} / {{ c.good_total }}</td>
-                <td class="n">{{ c.bad_rejected }} / {{ c.bad_total }}</td>
-                <td class="n">{{ c.either_answered }} / {{ c.either_total }}</td>
-                <td class="n">{{ c.declined_or_failed }}</td>
+            {% set m = entry.tests.get('mathlib', {}) %}
+            <tr data-checker="{{ entry.name }}"><td class="name"><a href="{{ quiet_root }}checker/{{ entry.name }}/">{{ entry.name }}</a></td>
+                <td class="n">{{ c.bad_rejected }}</td><td class="n">{% if c.bad_accepted %}<span class="verdict wrong">{{ c.bad_accepted }}</span>{% endif %}</td><td class="n">{% if c.bad_declined %}{{ c.bad_declined }}{% endif %}</td>
+                <td class="n">{{ c.good_accepted }}</td><td class="n">{% if c.good_rejected %}<span class="verdict wrong">{{ c.good_rejected }}</span>{% endif %}</td><td class="n">{% if c.good_declined %}{{ c.good_declined }}{% endif %}</td>
+                <td class="n">{{ c.either_answered }}</td><td class="n">{% if c.either_declined %}{{ c.either_declined }}{% endif %}</td>
+                <td class="n">{% if m.T4 and not m.T4.failed %}{{ m.T4.value | seconds }}{% else %}–{% endif %}</td>
+                <td class="n">{% if m.M and not m.M.failed %}{{ m.M.value | bytes }}{% else %}–{% endif %}</td>
                 <td>{% if entry.gates.unsound %}<span class="badge critical" title="{{ entry.gates.unsound | join(', ') }}">accepts {{ entry.gates.unsound | length }} invalid</span>{% endif %}
                     {% if entry.gates.wrong_rejects %}<span class="badge serious" title="{{ entry.gates.wrong_rejects | join(', ') }}">rejects {{ entry.gates.wrong_rejects | length }} valid</span>{% endif %}
                     {% if entry.flaky %}<span class="badge warning">verdict varies: {{ entry.flaky | length }}</span>{% endif %}
@@ -120,8 +138,9 @@ kept beside them. Ranks carry 95% intervals; checkers the data cannot separate s
 
 <section aria-labelledby="tradeoffs">
     <h2 id="tradeoffs">Trade-offs</h2>
-    <p class="section-note">A checker can be the fastest, or the leanest, or both. Up and to the right is better on both; a checker no other one beats on both is labelled.
-    The Pareto badge in the correctness table looks at all four metrics at once.</p>
+    <p class="section-note">A checker can be the fastest, or the leanest, or both. Up and to the right is better on both; the staircase is the front, the checkers
+    no other beats on both, and the shaded region is what they beat. <a href="{{ quiet_root }}pareto/">Every front</a>: each pair of categories,
+    the layers no weighting can move, Mathlib and every library in seconds and bytes.</p>
     <figure class="chart-card">
         <div class="scroll-x">{{ pareto_svg }}</div>
         <details class="twin"><summary>Table</summary>
@@ -138,7 +157,8 @@ kept beside them. Ranks carry 95% intervals; checkers the data cannot separate s
 <section aria-labelledby="h2h">
     <h2 id="h2h">Head to head</h2>
     <p class="section-note">The probability that the row checker's overall score beats the column checker's, over {{ board.bootstrap.replicates }} bootstrap replicates
-    that redraw every cell's runs and every family's tests. A rank is only taken by a win in at least 97.5% of them.</p>
+    that redraw every cell's runs and every family's tests. One checker is surely ahead of another only when it wins in nearly all of them,
+    the bound corrected for the comparisons made.</p>
     <figure class="chart-card">
         <div class="scroll-x">{{ h2h_svg }}</div>
         <details class="twin"><summary>Table</summary>

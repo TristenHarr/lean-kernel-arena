@@ -21,11 +21,21 @@ that did not produce it ranks below every checker that did), then fewest tests d
 or a timeout counting as a decline. Exact ties keep the order in which the Arena reads its
 checkers, checkers/<name>.yaml in path order, as do exact ties in every other category.
 
-Uncertainty comes from a stratified bootstrap that redraws every cell's runs and every family's
-tests, the same draws for every checker in a replicate. Each checker's rank comes with its
-marginal confidence set (Mogstad, Romano, Shaikh & Wilhelm, 2024): one checker is placed below
-another only when the other beats it in nearly every replicate, at a level corrected for the
-number of comparisons; otherwise they share a rank.
+A category's places follow the point estimate on the season's own suite, as a competition's do:
+down the board, a checker shares the place above it unless the checker above beats it in nearly
+every replicate of a bootstrap that redraws each cell's runs alone, the suite held fixed (at a
+level corrected for the neighbouring comparisons). So a place is decided by the suite, and only
+measurement noise can tie it.
+
+How much the order rests on which tests the suite holds is a second question, answered by a
+stratified bootstrap that also redraws every family's tests, the same draws for every checker in
+a replicate. From it each checker gets its rank's marginal confidence set (Mogstad, Romano,
+Shaikh & Wilhelm, 2024): one checker is surely below another only when the other beats it in
+nearly every replicate, at a level corrected for the number of comparisons. The rank shown with
+the set is its left end.
+
+The Pareto layers need no weights at all: the first is every ranked checker no other beats on
+every Pareto category at once, the second is the same after the first is set aside, and so on.
 """
 
 import bisect
@@ -281,6 +291,43 @@ def _file_order(name: str) -> tuple:
     return tuple(f"{name}.yaml".split("/"))
 
 
+def places(order, probabilities: dict, confidence: float) -> dict:
+    """Each checker's place down `order` (best first) and whether it shares it: a checker shares
+    the place above it unless the checker above beats it with probability at least
+    1 - alpha / (2 (N - 1)), a Bonferroni bound over the N - 1 neighbouring comparisons. A chain
+    of neighbours none of which can be told apart shares one place."""
+    order = list(order)
+    threshold = 1 - (1 - confidence) / (2 * max(len(order) - 1, 1)) - 1e-12
+    out = {}
+    for i, name in enumerate(order):
+        if i and probabilities[order[i - 1]][name] < threshold:
+            out[name] = out[order[i - 1]]
+        else:
+            out[name] = i + 1
+    counts = {}
+    for place in out.values():
+        counts[place] = counts.get(place, 0) + 1
+    return {name: (place, counts[place] > 1) for name, place in out.items()}
+
+
+def pareto_layers(vectors: dict) -> dict:
+    """Non-dominated sorting, smaller being better in every coordinate: layer 1 is every vector no
+    other dominates, layer k + 1 the same among those left once layers 1 to k are set aside."""
+    def dominates(u, v):
+        return all(a <= b for a, b in zip(u, v)) and any(a < b for a, b in zip(u, v))
+
+    left = dict(vectors)
+    layers = {}
+    layer = 0
+    while left:
+        layer += 1
+        front = [n for n, v in left.items() if not any(dominates(o, v) for m, o in left.items() if m != n)]
+        for name in front:
+            layers[name] = layer
+            del left[name]
+    return layers
+
+
 def _competition_ranks(scores: dict) -> dict:
     return {
         c: 1 + sum(1 for d, sd in scores.items() if d != c and sd < sc - _TIE_EPSILON)
@@ -301,23 +348,31 @@ def _gates(name, tests, summaries, lanes):
 
 
 def _correctness(name, tests, summaries, lane):
-    counts = {"good_total": 0, "good_accepted": 0, "bad_total": 0, "bad_rejected": 0,
-              "either_total": 0, "either_answered": 0, "declined_or_failed": 0}
+    """The Arena's tabulation (its ✋, 👍 and 🤷 columns): each kind of test by verdict, an error or
+    a timeout counting with the declines."""
+    counts = {"good_total": 0, "good_accepted": 0, "good_rejected": 0, "good_declined": 0,
+              "bad_total": 0, "bad_rejected": 0, "bad_accepted": 0, "bad_declined": 0,
+              "either_total": 0, "either_answered": 0, "either_declined": 0, "declined_or_failed": 0}
     for test in tests:
         summary = summaries.get(Cell(name, test["name"], lane))
         status = summary.status if summary else None
+        declined = status in ("declined", "error", "timeout")
         outcome = test.get("outcome")
         if outcome == "accept":
             counts["good_total"] += 1
             counts["good_accepted"] += status == "accepted"
+            counts["good_rejected"] += status == "rejected"
+            counts["good_declined"] += declined
         elif outcome == "reject":
             counts["bad_total"] += 1
             counts["bad_rejected"] += status == "rejected"
+            counts["bad_accepted"] += status == "accepted"
+            counts["bad_declined"] += declined
         else:
             counts["either_total"] += 1
             counts["either_answered"] += status in ("accepted", "rejected")
-        if status in ("declined", "error", "timeout"):
-            counts["declined_or_failed"] += 1
+            counts["either_declined"] += declined
+        counts["declined_or_failed"] += declined
     return counts
 
 
@@ -426,8 +481,9 @@ def score_board(tests, checkers, records, scoring: dict) -> dict:
 
     bootstrap = scoring["bootstrap"]
     confidence = bootstrap.get("confidence", 0.95)
-    replicates = _bootstrap(names, values, categories, family_split(tests, scoring["families"]), bootstrap,
-                            arena_terms, counts)
+    splits = family_split(tests, scoring["families"])
+    replicates = _bootstrap(names, values, categories, splits, bootstrap, arena_terms, counts)
+    noise = _bootstrap(names, values, categories, splits, bootstrap, arena_terms, counts, resample_tests=False)
 
     entries = {name: {"name": name, "reference": name == reference, "ranked": name in ranked,
                       "gates": gates[name], "categories": {}} for name in names}
@@ -469,6 +525,15 @@ def score_board(tests, checkers, records, scoring: dict) -> dict:
         exact = {a: {b: w / count for b, w in row.items()} for a, row in wins.items()}
         head_to_head[cat_id] = {a: {b: _round(p, 4) for b, p in row.items()} for a, row in exact.items()}
         sets = rank_sets(exact, contenders, confidence)
+        ordered = sorted(contenders, key=lambda n: (keys[n], _file_order(n)))
+        neighbours = {}
+        for above, below in zip(ordered, ordered[1:]):
+            beats = 0.0
+            for replicate in noise[cat_id]:
+                verdict = _compare(replicate[above][0], replicate[below][0])
+                beats += 1 if verdict < 0 else 0.5 if verdict == 0 else 0
+            neighbours[above] = {below: beats / max(len(noise[cat_id]), 1)}
+        placed = places(ordered, neighbours, confidence)
         rank_counts: dict[int, int] = {}
         for lo, _ in sets.values():
             rank_counts[lo] = rank_counts.get(lo, 0) + 1
@@ -484,17 +549,19 @@ def score_board(tests, checkers, records, scoring: dict) -> dict:
                 "factor": _round(factor, 6),
                 "factor_lo": _round(quantile_nearest_rank(samples, (1 - confidence) / 2), 6) if samples else None,
                 "factor_hi": _round(quantile_nearest_rank(samples, upper_q), 6) if samples else None,
-                "rank": None, "rank_lo": None, "rank_hi": None, "tied": False,
+                "rank": None, "rank_lo": None, "rank_hi": None, "tied": False, "place": None, "place_tied": False,
             }
             if name in sets:
                 lo, hi = sets[name]
-                result.update({"rank": lo, "rank_lo": lo, "rank_hi": hi, "tied": rank_counts[lo] > 1})
+                result.update({"rank": lo, "rank_lo": lo, "rank_hi": hi, "tied": rank_counts[lo] > 1,
+                               "place": placed[name][0], "place_tied": placed[name][1]})
             if arena:
                 result["arena"] = {**counts[cat_id][name], "measure": measures[name]} if counts[cat_id][name] else None
             entries[name]["categories"][cat_id] = result
         order[cat_id] = _display_order(names, keys, {n: entries[n]["categories"][cat_id]["rank"] for n in names})
 
-    _pareto(entries, ranked, scoring.get("pareto", []))
+    measured = {cat["id"] for cat in categories}
+    _layers(entries, ranked, [c for c in scoring.get("pareto", []) if c in measured])
     _sensitivity(entries, ranked, names, point_logs, categories, members, scoring.get("sensitivity"))
     _scaling(entries, names, summaries, scoring.get("scaling"), categories, members)
 
@@ -502,6 +569,9 @@ def score_board(tests, checkers, records, scoring: dict) -> dict:
     for name in names:
         entry = entries[name]
         entry["correctness"] = _correctness(name, tests, summaries, lane_for_counts)
+        entry["verdicts"] = {t["name"]: (summaries[Cell(name, t["name"], lane_for_counts)].status
+                                         if Cell(name, t["name"], lane_for_counts) in summaries else None)
+                             for t in tests}
         entry["flaky"] = sorted(f"{cell.test}/{cell.lane}" for cell, s in summaries.items()
                                 if cell.checker == name and s.flaky)
         entry["invalid_runs"] = sum(s.invalid for cell, s in summaries.items() if cell.checker == name)
@@ -511,6 +581,9 @@ def score_board(tests, checkers, records, scoring: dict) -> dict:
             tests_out.setdefault(test_name, {})[metric_id] = {
                 "value": _round(tv.value),
                 "failed": tv.failed,
+                "lo": _round(tv.values[0]) if tv.values else None,
+                "hi": _round(tv.values[-1]) if tv.values else None,
+                "n": len(tv.values) if tv.values else 0,
                 "ratio": _round(math.exp(tv.log - ref.log), 8) if ref is not None else None,
             }
         entry["tests"] = tests_out
@@ -546,34 +619,61 @@ def _display_order(names, keys, ranks):
 # Bootstrap
 
 
-def _bootstrap(names, values, categories, splits, config, arena_terms, counts) -> dict[str, list[dict]]:
+def _bootstrap(names, values, categories, splits, config, arena_terms, counts,
+               resample_tests: bool = True) -> dict[str, list[dict]]:
     """Each category's replicates: for every checker it can score, its key (what ranks it) and the
     log its factor is drawn from (None when it has no factor). Every category of a replicate sees
-    the same run drawn from each cell and the same tests drawn from each family."""
-    rng = SplitMix64(seed_from(str(config["seed"]), "bootstrap"))
+    the same run drawn from each cell and the same tests drawn from each family; without
+    `resample_tests` every family keeps its own tests and only the runs are redrawn, from a stream
+    of their own."""
+    stream = ("bootstrap",) if resample_tests else ("bootstrap", "runs")
+    rng = SplitMix64(seed_from(str(config["seed"]), *stream))
     replicates = config["replicates"]
     out = {cat["id"]: [] for cat in categories}
     family_ids = sorted({f for cat in categories for f in cat["families"]})
     plans = {family_id: splits[family_id] for family_id in family_ids}
 
+    weighted = [cat for cat in categories if cat["rule"] != "arena"]
+    needed = sorted({(m, f) for cat in weighted for m in cat["metrics"] for f in cat["families"]})
+    arena_keys = set(arena_terms.values())
     for _ in range(replicates):
-        picks = {}
+        logs, picks = {}, {}
         for name in names:
-            per = {}
+            per, chosen = {}, {}
             for key, tv in values[name].items():
-                if tv.cdf is None:
-                    per[key] = None
+                if tv.cdf is None or len(tv.cdf) == 1:
+                    per[key] = tv.log
                 else:
                     u = (rng.next_u64() >> 11) / 9007199254740992.0
-                    per[key] = min(bisect.bisect_left(tv.cdf, u), len(tv.support) - 1)
-            picks[name] = per
+                    j = min(bisect.bisect_left(tv.cdf, u), len(tv.support) - 1)
+                    per[key] = tv.support[j]
+                    if key in arena_keys:
+                        chosen[key] = j
+            logs[name], picks[name] = per, chosen
         drawn = {}
         for family_id, (pinned, free, free_weight) in plans.items():
             sample = list(pinned)
             if free:
                 share = free_weight / len(free)
-                sample += [(free[rng.below(len(free))], share) for _ in free]
+                if resample_tests:
+                    sample += [(free[rng.below(len(free))], share) for _ in free]
+                else:
+                    sample += [(test_name, share) for test_name in free]
             drawn[family_id] = sample
+        sums = {}
+        for name in names:
+            per = logs[name]
+            own = {}
+            for metric_id, family_id in needed:
+                terms = []
+                for test_name, weight in drawn[family_id]:
+                    value = per.get((metric_id, test_name))
+                    if value is None:
+                        terms = None
+                        break
+                    terms.append(weight * value)
+                own[(metric_id, family_id)] = math.fsum(terms) if terms is not None else None
+            sums[name] = own
         for cat in categories:
             scores = {}
             for name in names:
@@ -585,46 +685,30 @@ def _bootstrap(names, values, categories, splits, config, arena_terms, counts) -
                     scores[name] = (_arena_key(counts[cat["id"]][name], measure),
                                     math.log(measure) if measure is not None else None)
                     continue
-                total = []
-                complete = True
-                for metric_id, alpha in cat["metrics"].items():
-                    for family_id, beta in cat["families"].items():
-                        for test_name, weight in drawn[family_id]:
-                            key = (metric_id, test_name)
-                            tv = values[name].get(key)
-                            if tv is None:
-                                complete = False
-                                break
-                            total.append(alpha * beta * weight * tv.drawn(picks[name][key])[0])
-                        if not complete:
-                            break
-                    if not complete:
-                        break
-                if complete:
-                    score = math.fsum(total)
+                parts = [alpha * beta * sums[name][(metric_id, family_id)]
+                         for metric_id, alpha in cat["metrics"].items() for family_id, beta in cat["families"].items()
+                         if sums[name][(metric_id, family_id)] is not None]
+                if len(parts) == len(cat["metrics"]) * len(cat["families"]):
+                    score = math.fsum(parts)
                     scores[name] = ((score,), score)
             out[cat["id"]].append(scores)
     return out
 
 
 # ---------------------------------------------------------------------------------------------
-# Pareto front, weight sensitivity, parallel scaling
+# Pareto layers, weight sensitivity, parallel scaling
 
 
-def _pareto(entries, ranked, category_ids):
+def _layers(entries, ranked, category_ids):
     vectors = {}
     for name in ranked:
         scores = [entries[name]["categories"].get(c, {}).get("score") for c in category_ids]
         if category_ids and all(s is not None for s in scores):
-            vectors[name] = scores
+            vectors[name] = tuple(scores)
+    layers = pareto_layers(vectors)
     for name in entries:
-        entries[name]["pareto"] = False
-    for name, vector in vectors.items():
-        dominated = any(
-            all(o <= v for o, v in zip(other, vector)) and any(o < v for o, v in zip(other, vector))
-            for other_name, other in vectors.items() if other_name != name
-        )
-        entries[name]["pareto"] = not dominated
+        entries[name]["pareto_layer"] = layers.get(name)
+        entries[name]["pareto"] = layers.get(name) == 1
 
 
 def _sensitivity(entries, ranked, names, point_logs, categories, members, config):

@@ -220,6 +220,21 @@ svg.chart .muted { fill: var(--de-emphasis); }
 svg.chart .cross { stroke-width: 2; stroke-linecap: round; fill: none; }
 svg.chart .cross.s1 { stroke: var(--s1); } svg.chart .cross.s2 { stroke: var(--s2); } svg.chart .cross.s3 { stroke: var(--s3); }
 svg.chart polyline.front { fill: none; stroke: var(--s1); stroke-width: 2; stroke-linejoin: round; opacity: 0.55; }
+svg.chart polygon.dominated { fill: var(--s1); opacity: 0.045; stroke: none; }
+svg.chart line.gutter { stroke: var(--axis); stroke-dasharray: 3 3; }
+svg.chart .off-scale-label { fill: var(--muted); font-size: 10px; }
+svg.chart line.whisker { stroke: var(--ink-2); stroke-width: 1.5; }
+svg.chart .muted-text { fill: var(--muted); font-size: 12px; }
+svg.chart text.value { fill: var(--ink); font-size: 12px; font-variant-numeric: tabular-nums; }
+svg.chart .reference-label { fill: var(--muted); font-size: 11px; }
+svg.chart .direct-label.minor { fill: var(--muted); font-weight: 400; font-size: 11px; }
+svg.chart line.axis { stroke: var(--axis); stroke-width: 1; }
+svg.chart .axis-title { fill: var(--ink-2); font-size: 12px; font-weight: 600; }
+svg.chart polyline.line { fill: none; stroke-width: 1.6; stroke-linejoin: round; }
+svg.chart polyline.line.s1 { stroke: var(--s1); stroke-width: 2.2; }
+svg.chart polyline.line.muted { stroke: var(--de-emphasis); opacity: 0.45; }
+svg.chart polyline.hit-line { fill: none; stroke: transparent; stroke-width: 12; }
+svg.chart g.series:hover polyline.line, svg.chart g.series:focus polyline.line { stroke-width: 3; opacity: 1; }
 svg.chart .bar { stroke: none; }
 svg.chart rect.cell, svg.chart rect.swatch { stroke: none; }
 svg.chart rect.diag { fill: var(--surface-2); }
@@ -247,3 +262,18 @@ svg.chart rect.cell:hover, svg.chart rect.cell:focus { stroke: var(--ink); strok
 @media (forced-colors: active) {
   svg.chart .pt, svg.chart .dot, svg.chart .bar, svg.chart rect.cell { forced-color-adjust: none; }
 }
+
+/* Pareto small multiples, the library and test tables */
+.small-multiples { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 12px; }
+.small-multiples .chart-card { margin: 0; }
+table.matrix { font-size: 12px; }
+table.matrix th.rot { height: 120px; vertical-align: bottom; padding: 0 2px; white-space: nowrap; }
+table.matrix th.rot > a { display: inline-block; writing-mode: vertical-rl; transform: rotate(180deg); }
+table.matrix td.n { padding: 3px 6px; }
+table.matrix tbody.group th { text-align: left; }
+table.matrix tbody.group details summary { cursor: pointer; font-weight: 600; }
+table.matrix th.name { font-weight: 400; text-align: left; white-space: nowrap; }
+.verdict.correct { color: var(--good-text); }
+.verdict.wrong { color: var(--critical); font-weight: 650; }
+.verdict.declined { color: var(--muted); }
+td.verdict.wrong { background: color-mix(in srgb, var(--critical) 14%, transparent); }

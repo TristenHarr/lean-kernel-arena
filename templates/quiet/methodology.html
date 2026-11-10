@@ -185,8 +185,10 @@ confidence sets drawn from the same replicates as every other rank. The test sui
 </div>
 
 <div class="prose">
-<h2 id="uncertainty">Uncertainty and ranks</h2>
-<p>The board is redrawn {{ board.bootstrap.replicates }} times. Each replicate draws every cell's median from its exact bootstrap distribution,</p>
+<h2 id="uncertainty">Places, uncertainty and ranges</h2>
+<p>A category's places are a competition's: they follow the estimate on the season's own suite, best first, and never go back. Two neighbours share a
+place only when the noise of their runs cannot tell them apart. For that, the board is redrawn {{ board.bootstrap.replicates }} times with the suite held
+fixed, each replicate drawing every cell's median from its exact bootstrap distribution,</p>
 <div class="formula">
 <math display="block"><mrow>
   <mi>P</mi><mo>(</mo><msubsup><mi>X</mi><mrow><mo>(</mo><mi>k</mi><mo>)</mo></mrow><mo>*</mo></msubsup><mo>≤</mo><msub><mi>x</mi><mrow><mo>(</mo><mi>j</mi><mo>)</mo></mrow></msub><mo>)</mo><mo>=</mo>
@@ -197,9 +199,15 @@ confidence sets drawn from the same replicates as every other rank. The test sui
   <mi>k</mi><mo>=</mo><mo>⌈</mo><mfrac><mi>n</mi><mn>2</mn></mfrac><mo>⌉</mo>
 </mrow></math>
 </div>
-<p>and redraws each family's tests with replacement (Mathlib, pinned to half of the libraries, stays), the same draws for every checker. A checker's factor
-interval is the middle 95% of its replicate factors against the reference's in the same replicates. Its rank is a set, the marginal confidence set of
-Mogstad, Romano, Shaikh and Wilhelm (2024): with <math><mi>N</mi></math> ranked checkers and <math><mi>α</mi><mo>=</mo><mn>1</mn><mo>−</mo><mi>γ</mi></math>,</p>
+<p>and down the order a checker shares the place above it unless the checker above wins in at least
+<math><mn>1</mn><mo>−</mo><mfrac><mi>α</mi><mrow><mn>2</mn><mo>(</mo><mi>N</mi><mo>−</mo><mn>1</mn><mo>)</mo></mrow></mfrac></math>
+of these replicates, a bound corrected for the <math><mi>N</mi><mo>−</mo><mn>1</mn></math> neighbouring comparisons. A place is therefore decided by
+the suite the season fixed, and only measurement noise can tie it.</p>
+<p>Which tests a suite holds is a choice, and a checker tuned to one suite would show it here. So a second set of
+{{ board.bootstrap.replicates }} replicates also redraws each family's tests with replacement (Mathlib, pinned to half of the libraries, stays), the same
+draws for every checker. A checker's factor interval is the middle 95% of its replicate factors against the reference's in the same replicates, and the
+range beside its place is the marginal confidence set for its rank of Mogstad, Romano, Shaikh and Wilhelm (2024): with
+<math><mi>N</mi></math> ranked checkers and <math><mi>α</mi><mo>=</mo><mn>1</mn><mo>−</mo><mi>γ</mi></math>,</p>
 <div class="formula">
 <math display="block"><mrow>
   <mtext>rank</mtext><mo>(</mo><mi>c</mi><mo>)</mo><mo>∈</mo><mo>[</mo>
@@ -213,9 +221,11 @@ Mogstad, Romano, Shaikh and Wilhelm (2024): with <math><mi>N</mi></math> ranked 
 <p>where <math><msub><mover><mi>p</mi><mo>^</mo></mover><mrow><mi>d</mi><mi>c</mi></mrow></msub></math> is the share of replicates in which
 <math><mi>d</mi></math> scores better than <math><mi>c</mi></math>. The bound <math><mi>τ</mi></math> corrects for the
 <math><mi>N</mi><mo>−</mo><mn>1</mn></math> comparisons each checker takes part in, so the set covers the checker's true rank with probability
-<math><mi>γ</mi></math>. The rank shown is the left end of the set; checkers whose left ends meet share it.</p>
-<p>Rows are ordered by the estimate; where an estimate and a rank disagree, the rank says which gaps the data supports. Every random draw, of run order and
-of resampling, comes from one generator, SplitMix64, seeded by name, so the board re-scores to the same bytes on any machine.</p>
+<math><mi>γ</mi></math>. A narrow range is a place the suite's composition cannot argue with; a wide one is a place that rests on which tests were
+chosen. Both are in board.json, the range's left end as <span class="mono">rank</span>.</p>
+<p>The <a href="{{ quiet_root }}pareto/">Pareto layers</a> need neither weights nor resampling: layer 1 is every ranked checker no other beats on every
+Pareto category at once, layer 2 is the same once layer 1 is set aside, and so on. Every random draw, of run order and of resampling, comes from one
+generator, SplitMix64, seeded by name, so the board re-scores to the same bytes on any machine.</p>
 
 <h2 id="reproduce">Reproduce it</h2>
 <p>Everything on the board comes from <a href="{{ quiet_root }}board.json">board.json</a> and the run records behind it. To score the records again:</p>

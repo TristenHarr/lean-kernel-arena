@@ -1,5 +1,6 @@
-// The quiet board's only script: a tooltip for chart marks and the light/dark switch.
-// Everything it shows is also in each chart's <title> elements and table twin.
+// The quiet board's only script: a tooltip for chart marks, the light/dark switch and the test
+// table's groups. Everything it shows is also in each chart's <title> elements and table twin, and
+// without it every group of the test table stays open.
 (function () {
   "use strict";
 
@@ -56,5 +57,13 @@
     var next = dark ? "light" : "dark";
     root.setAttribute("data-theme", next);
     try { localStorage.setItem("quiet-theme", next); } catch (e) { /* not remembered */ }
+  });
+
+  // Test table: a group's members follow its <details>; collapsed only once this script runs.
+  document.querySelectorAll("details[data-group]").forEach(function (details) {
+    var members = document.querySelector('tbody[data-members="' + details.getAttribute("data-group") + '"]');
+    if (!members) return;
+    members.hidden = !details.open;
+    details.addEventListener("toggle", function () { members.hidden = !details.open; });
   });
 })();

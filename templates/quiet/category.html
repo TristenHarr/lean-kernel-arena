@@ -30,7 +30,7 @@ the reference and the unsound included, exactly where the Arena's board does; it
     <table class="data" id="arena-order">
         <thead><tr><th class="n">Place</th><th>Checker</th><th class="n">Invalid proofs accepted</th><th class="n">Valid proofs rejected</th>
             <th class="n">{{ metric.title }}, {{ board.families[(category.families | list)[0]].title }}</th><th class="n">× {{ board.reference }}</th>
-            <th class="n">Tests declined</th><th class="n">Places it can hold (95%)</th></tr></thead>
+            <th class="n">Tests declined</th><th class="n" title="The places a redrawn suite of tests could give it, at 95%">Under a redrawn suite</th></tr></thead>
         <tbody>
         {% for row in arena_rows %}
         <tr data-checker="{{ row.name }}"><td class="n">{{ row.place }}</td>
@@ -65,10 +65,10 @@ the reference and the unsound included, exactly where the Arena's board does; it
 
 <figure class="chart-card">
     <div class="scroll-x">{{ forest_svg }}</div>
-    <figcaption>Factor over {{ board.reference }} with its 95% bootstrap interval; "=" marks a rank shared with a checker the data cannot separate.</figcaption>
+    <figcaption>Factor over {{ board.reference }} with its 95% bootstrap interval; "=" marks a place shared with a checker whose runs cannot be told apart.</figcaption>
     <details class="twin" open><summary>Table</summary>
         <table class="data">
-            <thead><tr><th>Rank</th><th>Checker</th><th class="n">Factor</th><th class="n">95% interval</th><th class="n">Places it can hold (95%)</th></tr></thead>
+            <thead><tr><th class="n">Place</th><th>Checker</th><th class="n">Factor</th><th class="n">95% interval</th><th class="n" title="The places a redrawn suite of tests could give it, at 95%">Under a redrawn suite</th></tr></thead>
             <tbody>
             {% for row in rows %}
             {% set result = results[row.name] %}

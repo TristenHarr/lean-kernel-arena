@@ -1,0 +1,72 @@
+{% extends "quiet/base.html" %}
+{% block title %}Pareto fronts{% endblock %}
+{% block content %}
+<p class="muted"><a href="{{ quiet_root }}./">Board</a> · Pareto</p>
+<h1>The Pareto fronts</h1>
+<p class="lede">A checker is on the front when no other is at least as good on every measure and better on one. The front needs no weights:
+it is the set of checkers that are best at something, or at a balance nobody else beats. Every chart here draws it as a staircase,
+the region it dominates shaded.</p>
+
+<section aria-labelledby="layers">
+    <h2 id="layers">Layers</h2>
+    <p class="section-note">Non-dominated sorting over {% for c in pareto_ids %}{{ titles[c] | lower }}{% if not loop.last %}{% if loop.revindex == 2 %} and {% else %}, {% endif %}{% endif %}{% endfor %}:
+    layer 1 is the front; layer 2 is the front once layer 1 is set aside, and so on. A checker's layer is a ranking that no choice of weights can move.</p>
+    <figure class="chart-card">
+        <div class="scroll-x">{{ parallel_svg }}</div>
+        <figcaption>Factors over {{ board.reference }} on a shared log scale, better upwards on every axis; a line that crosses another between two axes is a trade-off.</figcaption>
+    </figure>
+    <div class="table-card">
+        <table class="data">
+            <thead><tr><th class="n">Layer</th><th>Checker</th>{% for c in pareto_ids %}<th class="n">{{ titles[c] }}</th>{% endfor %}<th title="The checkers that beat it on every one of them and beat no other such checker; hover for all of them">Beaten on every one of them, closest first</th></tr></thead>
+            <tbody>
+            {% for row in layers %}
+            <tr><td class="n">{{ row.layer }}</td><td class="name"><a href="{{ quiet_root }}checker/{{ row.name }}/">{{ row.name }}</a></td>
+                {% for c in pareto_ids %}<td class="n">{{ row.factors[c] | factor }}</td>{% endfor %}
+                <td>{% if row.dominated_by %}<span title="All of them: {{ row.dominated_by | join(', ') }}">{{ row.closest | join(', ') }}{% if row.dominated_by | length > row.closest | length %} <span class="muted">and {{ row.dominated_by | length - row.closest | length }} more</span>{% endif %}</span>{% else %}<span class="badge accent">no one</span>{% endif %}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section aria-labelledby="pairs">
+    <h2 id="pairs">Two at a time</h2>
+    <p class="section-note">Every pair of Pareto categories, as factors over {{ board.reference }} (up and to the right is better). The staircase is the front of that pair alone.</p>
+    <div class="small-multiples">
+        {% for chart in pair_svgs %}
+        <figure class="chart-card"><div class="scroll-x">{{ chart.svg }}</div></figure>
+        {% endfor %}
+    </div>
+</section>
+
+{% if mathlib_charts %}
+<section aria-labelledby="mathlib">
+    <h2 id="mathlib">Mathlib, in seconds and bytes</h2>
+    <p class="section-note">The measurements themselves, not factors: wall time and peak memory on Mathlib, every ranked checker and {{ board.reference }}.
+    Down and to the left is better; the staircase is the front.</p>
+    {% for chart in mathlib_charts %}
+    <figure class="chart-card">
+        <div class="scroll-x">{{ chart.svg }}</div>
+        <details class="twin"><summary>Table</summary>
+            <table class="data"><thead><tr><th>Checker</th><th class="n">{{ metrics[chart.x].title }}</th><th class="n">Peak memory</th><th>Front</th></tr></thead>
+                <tbody>{% for p in chart.points | sort(attribute='x') %}
+                <tr><td class="name">{{ p.name }}</td><td class="n">{{ p.x | seconds }}</td><td class="n">{{ p.y | bytes }}</td><td>{% if p.pareto %}yes{% endif %}</td></tr>
+                {% endfor %}</tbody></table>
+        </details>
+    </figure>
+    {% endfor %}
+</section>
+{% endif %}
+
+{% if library_charts %}
+<section aria-labelledby="libraries">
+    <h2 id="libraries">Every other library</h2>
+    <p class="section-note">Wall time on four cores against peak memory, library by library; down and to the left is better. <a href="{{ quiet_root }}libraries/">Every number</a>.</p>
+    <div class="small-multiples">
+        {% for chart in library_charts %}
+        <figure class="chart-card"><div class="scroll-x">{{ chart.svg }}</div></figure>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+{% endblock %}

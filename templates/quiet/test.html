@@ -1,0 +1,27 @@
+{% extends "quiet/base.html" %}
+{% block title %}{{ test.name }}{% endblock %}
+{% block content %}
+<p class="muted"><a href="{{ quiet_root }}./">Board</a> · <a href="{{ quiet_root }}tests/">Tests</a> · {{ test.name }}</p>
+<h1><span class="mono">{{ test.name }}</span></h1>
+<p class="lede">{% if test.outcome == 'accept' %}A valid proof: every checker should accept it.{% elif test.outcome == 'reject' %}An invalid proof: every checker should reject it.{% else %}A corner case with no expected outcome: accepting and rejecting are both fine.{% endif %}
+{% if test.size %} {{ test.size | bytes }}.{% endif %}{% if test.timeout %} Time limit {{ test.timeout | seconds }}.{% endif %}
+<a href="{{ root_path }}test/{{ test.name }}/">The Arena's page for this test</a>.</p>
+
+{% for chart in bars %}
+<h2>{{ chart.metric.title }}</h2>
+<figure class="chart-card"><div class="scroll-x">{{ chart.svg }}</div>
+    <figcaption>The median of each checker's valid runs, best first; the whisker spans its fastest and slowest run.
+    Ranked checkers in blue, {{ board.reference }} in green, checkers not ranked (unsound or incomplete) in grey.</figcaption></figure>
+{% endfor %}
+
+<h2>Verdicts</h2>
+<div class="table-card">
+    <table class="data">
+        <thead><tr><th>Checker</th><th>Verdict</th></tr></thead>
+        <tbody>{% for v in verdicts | sort(attribute='name') %}
+        <tr><td class="name"><a href="{{ quiet_root }}checker/{{ v.name }}/">{{ v.name }}</a></td>
+            <td><span class="verdict {{ v.kind or 'missing' }}">{{ v.status or 'not measured' }}</span></td></tr>
+        {% endfor %}</tbody>
+    </table>
+</div>
+{% endblock %}
