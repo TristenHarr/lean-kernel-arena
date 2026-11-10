@@ -2754,10 +2754,10 @@ def cmd_build_site(args: argparse.Namespace) -> int:
         "root_path": "",
     }
 
-    # Render index.html
+    # Render index.html (arena.html when the quiet board is the home page)
     try:
         template = env.get_template("index.html")
-        output_file = output_dir / "index.html"
+        output_file = output_dir / ("arena.html" if quiet_board is not None and args.quiet_home else "index.html")
         template.stream(data).dump(str(output_file))
         print(f"Generated: {output_file}")
     except Exception as e:
@@ -2963,7 +2963,7 @@ def cmd_build_site(args: argparse.Namespace) -> int:
         machine = dict(quiet_board.get("machine") or {})
         if args.machine:
             machine.update(yaml.safe_load(Path(args.machine).read_text()))
-        quiet_site.render(quiet_board, season, machine, env, output_dir, build_info)
+        quiet_site.render(quiet_board, season, machine, env, output_dir, build_info, home_at_root=args.quiet_home)
         print(f"Generated: {output_dir / quiet_site.QUIET_DIR}/")
 
     print(f"\nSite built successfully in: {output_dir}")
@@ -3258,6 +3258,11 @@ def main() -> int:
         "--machine",
         metavar="FILE",
         help="The quiet board's machine profile, shown on its methodology page",
+    )
+    build_site_parser.add_argument(
+        "--quiet-home",
+        action="store_true",
+        help="Make the quiet board the site's home page; the arena's own index is then arena.html",
     )
 
     # build-rounds-index command

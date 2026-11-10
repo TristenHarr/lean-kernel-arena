@@ -152,8 +152,9 @@ never lowers what the failure costs.</p>
         <thead><tr><th>Category</th>{% for metric_id, metric in season.metrics.items() %}<th class="n">{{ metric.title }}</th>{% endfor %}
             {% for family_id, family in season.families.items() %}{% if family_id != 'mathlib' %}<th class="n">{{ family.title }}</th>{% endif %}{% endfor %}<th class="n">Mathlib only</th></tr></thead>
         <tbody>
+        {% set rendered = categories | map(attribute='id') | list %}
         {% for category in season.categories %}
-        <tr><td><a href="{{ quiet_root }}category/{{ category.id }}/">{{ category.title }}</a></td>
+        <tr><td>{% if category.id in rendered %}<a href="{{ quiet_root }}category/{{ category.id }}/">{{ category.title }}</a>{% else %}{{ category.title }} <span class="muted">(not measured here)</span>{% endif %}</td>
             {% for metric_id, metric in season.metrics.items() %}<td class="n">{{ category.metrics.get(metric_id, '') }}</td>{% endfor %}
             {% for family_id, family in season.families.items() %}{% if family_id != 'mathlib' %}<td class="n">{{ category.families.get(family_id, '') }}</td>{% endif %}{% endfor %}
             <td class="n">{{ category.families.get('mathlib', '') }}</td></tr>

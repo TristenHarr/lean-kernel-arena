@@ -1,0 +1,50 @@
+# First-time setup, run by hand: bring every checker and test of leanprover/lean-kernel-arena into the
+# fork, then build every checker from scratch on the quiet box and start measuring. Later rounds need
+# none of this: the nightly sync and the board's own triggers keep it current.
+name: Quiet board setup
+
+on:
+  workflow_dispatch:
+    inputs:
+      budget_hours:
+        description: Hours of measurement in the first run (a nightly run continues it)
+        default: "20"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  not-enabled:
+    name: The quiet board is not switched on
+    if: vars.QUIET_BOARD != 'on'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::error::set the repository variable QUIET_BOARD to on (Settings, Secrets and variables, Actions, Variables) once the quiet box's runner is up"
+          exit 1
+
+  import:
+    name: Import the latest checkers and start the board
+    if: vars.QUIET_BOARD == 'on'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+      - name: Merge every upstream checker and test
+        run: |
+          git config user.name "quiet-board setup"
+          git config user.email "quiet-board-setup@users.noreply.github.com"
+          git remote add upstream https://github.com/leanprover/lean-kernel-arena.git
+          git fetch upstream master
+          git merge --no-edit upstream/master || { git merge --abort; echo "::error::upstream does not merge cleanly; resolve by hand"; exit 1; }
+          git push origin HEAD:master
+          echo "### Imported" >> "$GITHUB_STEP_SUMMARY"
+          ls checkers/*.yaml | sed 's#checkers/\(.*\)\.yaml#- \1#' >> "$GITHUB_STEP_SUMMARY"
+      - name: Build every checker and start measuring
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run quiet-board.yml --ref master -f rebuild=true -f checkers='*' -f budget_hours="${{ inputs.budget_hours }}"

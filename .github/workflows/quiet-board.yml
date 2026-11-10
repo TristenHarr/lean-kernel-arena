@@ -1,36 +1,36 @@
-# The Quiet Board: every checker built and measured on a dedicated quiet machine through its self-hosted
-# runner, then scored and published from a GitHub-hosted runner. Inert unless the repository variable
-# QUIET_BOARD is "on" (it is never set upstream). Never triggered by pull requests: no code from a fork
-# runs on the quiet box.
+# The Quiet Board, triggered as the arena's own build-and-deploy is: a push to master builds, measures,
+# scores and deploys; a pull request is checked; a manual run can rebuild every checker. Measuring
+# happens on the dedicated quiet box (self-hosted runner, label lka-n100-quiet) and nowhere else, and
+# never for a pull request: no code from a fork runs on the box. A full round takes longer than one
+# job may, so a nightly run continues it; runs are append-only, so any run resumes where the last
+# stopped. Inert unless the repository variable QUIET_BOARD is "on" (it is never set upstream).
 name: Quiet board
 
 on:
-  schedule:
-    - cron: "17 2 * * *"
   workflow_dispatch:
     inputs:
+      rebuild:
+        description: Rebuild every checker, instead of reusing the builds of unchanged sources
+        type: boolean
+        default: false
       checkers:
         description: Glob of checkers to build and measure
         default: "*"
       budget_hours:
         description: Hours of measurement in this run
         default: "20"
+  pull_request:
   push:
     branches: [master]
-    paths:
-      - "checkers/**"
-      - "tests/**"
-      - "lka_quiet/**"
-      - "quietbox/**"
-      - "machines/**"
-      - "scoring/**"
+  schedule:
+    - cron: "17 2 * * *"
 
 permissions:
   contents: read
 
 concurrency:
-  group: quiet-board
-  cancel-in-progress: false
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   MACHINE: machines/n100-quiet.yaml
@@ -38,8 +38,31 @@ env:
   STATE: /srv/lka
 
 jobs:
-  measure:
+  check:
+    name: Check
     if: vars.QUIET_BOARD == 'on'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Dependencies
+        run: python3 -m pip install --quiet jinja2 jsonschema markdown pyyaml
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests_lka -t .
+      - name: Every checker and test definition is valid
+        run: python3 lka.py list-checkers > /dev/null
+      - name: The site renders
+        run: |
+          curl -fsSL -o official-results.json https://arena.lean-lang.org/results.json
+          python3 quietbox/preview-from-arena.py official-results.json --season "$SEASON" --out _build/preview.json
+          python3 lka.py build-site --outdir _out --results official-results.json --board _build/preview.json \
+            --machine "$MACHINE" --quiet-home
+
+  measure:
+    name: Build and measure on the quiet box
+    needs: check
+    if: vars.QUIET_BOARD == 'on' && github.event_name != 'pull_request'
     runs-on: [self-hosted, linux, x64, lka-n100-quiet]
     timeout-minutes: 1440
     steps:
@@ -58,7 +81,8 @@ jobs:
       - name: Build the checkers whose source changed
         run: |
           nix develop --command python3 lka.py quiet-build --checker "${{ inputs.checkers || '*' }}" \
-            --results "$STATE/results" || echo "::warning::some checkers did not build; they are not measured"
+            --results "$STATE/results" ${{ inputs.rebuild && '--force' || '' }} \
+            || echo "::warning::some checkers did not build; they are not measured"
 
       - name: Quiet the machine
         run: sudo -n /usr/local/libexec/lka/lka-quiet on
@@ -89,9 +113,37 @@ jobs:
             board.json
             quiet-results.tar.xz
           retention-days: 30
+          overwrite: true
+
+  tutorial:
+    name: Build tutorial page
+    if: vars.QUIET_BOARD == 'on' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build tutorial tests
+        run: ./lka.py build-test tutorial
+        shell: 'nix develop -c bash -euxo pipefail {0}'
+      - name: Build tutorial test viewer
+        run: |
+          cd test-printer
+          lake build
+          lake exe test-printer ../_build/tests/tutorial/ ../_out/tutorial/index.html
+        shell: 'nix develop -c bash -euxo pipefail {0}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tutorial-page
+          path: _out/tutorial
+          overwrite: true
 
   publish:
-    needs: measure
+    name: Publish
+    needs: [measure, tutorial]
+    if: vars.QUIET_BOARD == 'on' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -105,7 +157,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: quiet-board
-      - name: Site dependencies
+      - name: Dependencies
         run: python3 -m pip install --quiet jinja2 jsonschema markdown pyyaml
       - name: Check the board
         run: |
@@ -120,7 +172,12 @@ jobs:
       - name: Build the site
         run: |
           curl -fsSL -o official-results.json https://arena.lean-lang.org/results.json
-          python3 lka.py build-site --outdir _out --results official-results.json --board board.json --machine "$MACHINE"
+          python3 lka.py build-site --outdir _out --results official-results.json --board board.json \
+            --machine "$MACHINE" --quiet-home
+      - uses: actions/download-artifact@v4
+        with:
+          name: tutorial-page
+          path: _out/tutorial
       - name: Publish the raw runs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -132,6 +189,9 @@ jobs:
           gh release upload "quiet-$epoch" quiet-results.tar.xz board.json --clobber
       - uses: actions/upload-pages-artifact@v3
         with:
+          name: github-pages-${{ github.run_attempt }}
           path: _out
       - id: deploy
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}

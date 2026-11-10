@@ -20,7 +20,7 @@ Ranks carry 95% intervals; checkers the data cannot separate share a rank.</p>
     <p class="section-note">The best checker in each category, as a factor over Lean's own kernel, with its 95% interval. Each tile opens the category's full ranking.</p>
     <div class="tiles">
         {% for tile in tiles %}
-        <a class="tile{% if tile.category.id == 'overall' %} overall{% endif %}" href="category/{{ tile.category.id }}/">
+        <a class="tile{% if tile.category.id == 'overall' %} overall{% endif %}" href="{{ quiet_root }}category/{{ tile.category.id }}/">
             <span class="label">{{ tile.category.title }}</span>
             {% if tile.leaders.names %}
             <span class="who" title="{{ tile.leaders.names | join(', ') }}">{{ tile.leaders.label }}</span>
@@ -39,7 +39,7 @@ Ranks carry 95% intervals; checkers the data cannot separate share a rank.</p>
     <p class="section-note">One number per checker: the weighted geometric mean of its time on four cores and on one, its peak memory and its energy,
     against Lean's kernel, over whole libraries, stress tests and small files. A dot is the estimate, the bar its 95% interval.
     A rank is taken only from checkers that are better in nearly every redraw of the data; "=" marks a rank shared with checkers the data cannot separate.
-    <a href="methodology/#uncertainty">How it is computed</a>.</p>
+    <a href="{{ quiet_root }}methodology/#uncertainty">How it is computed</a>.</p>
     <figure class="chart-card">
         <div class="scroll-x">{{ overall_svg }}</div>
         <figcaption>Ranked checkers only: sound, and never rejecting a valid proof. Reference line: {{ board.reference }}.</figcaption>
@@ -49,7 +49,7 @@ Ranks carry 95% intervals; checkers the data cannot separate share a rank.</p>
                 <tbody>
                 {% for row in overall_rows %}
                 {% set result = board.checkers | selectattr('name', 'equalto', row.name) | first %}
-                <tr><td class="n">{{ row.rank }}</td><td><a href="checker/{{ row.name }}/">{{ row.name }}</a></td>
+                <tr><td class="n">{{ row.rank }}</td><td><a href="{{ quiet_root }}checker/{{ row.name }}/">{{ row.name }}</a></td>
                     <td class="n">{{ row.factor | factor }}</td><td class="n">[{{ '%.3g' % row.lo }}, {{ '%.3g' % row.hi }}]</td>
                     <td class="n">{{ result.categories.overall.rank_lo }}–{{ result.categories.overall.rank_hi }}</td></tr>
                 {% endfor %}
@@ -64,7 +64,7 @@ Ranks carry 95% intervals; checkers the data cannot separate share a rank.</p>
             <thead><tr><th>Checker</th><th>Why</th><th class="n">Factor (shown, not ranked)</th></tr></thead>
             <tbody>
             {% for row in overall_unranked %}
-            <tr><td><a href="checker/{{ row.name }}/">{{ row.name }}</a></td>
+            <tr><td><a href="{{ quiet_root }}checker/{{ row.name }}/">{{ row.name }}</a></td>
                 <td>{% if 'invalid' in row.why %}<span class="badge critical">{{ row.why }}</span>{% elif 'valid proof' in row.why %}<span class="badge serious">{{ row.why }}</span>{% else %}{{ row.why }}{% endif %}</td>
                 <td class="n">{{ row.interval }}</td></tr>
             {% endfor %}
@@ -80,10 +80,10 @@ Ranks carry 95% intervals; checkers the data cannot separate share a rank.</p>
     <div class="table-card">
         <table class="data ranks">
             <thead><tr><th>Checker</th>
-            {% for category in grid.categories %}<th class="n"><a href="category/{{ category.id }}/">{{ category.title }}</a></th>{% endfor %}</tr></thead>
+            {% for category in grid.categories %}<th class="n"><a href="{{ quiet_root }}category/{{ category.id }}/">{{ category.title }}</a></th>{% endfor %}</tr></thead>
             <tbody>
             {% for row in grid.rows %}
-            <tr><td><a href="checker/{{ row.name }}/">{{ row.name }}</a></td>
+            <tr><td><a href="{{ quiet_root }}checker/{{ row.name }}/">{{ row.name }}</a></td>
                 {% for cell in row.cells %}<td class="q{% if cell.q is not none %} q{{ cell.q }}{% endif %}"{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.text }}</td>{% endfor %}</tr>
             {% endfor %}
             </tbody>
@@ -103,7 +103,7 @@ Ranks carry 95% intervals; checkers the data cannot separate share a rank.</p>
             <tbody>
             {% for entry in board.checkers | sort(attribute='name') %}
             {% set c = entry.correctness %}
-            <tr><td><a href="checker/{{ entry.name }}/">{{ entry.name }}</a></td>
+            <tr><td><a href="{{ quiet_root }}checker/{{ entry.name }}/">{{ entry.name }}</a></td>
                 <td class="n">{{ c.good_accepted }} / {{ c.good_total }}</td>
                 <td class="n">{{ c.bad_rejected }} / {{ c.bad_total }}</td>
                 <td class="n">{{ c.either_answered }} / {{ c.either_total }}</td>

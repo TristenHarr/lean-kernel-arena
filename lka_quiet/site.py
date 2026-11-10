@@ -193,12 +193,16 @@ class SiteError(ValueError):
     pass
 
 
-def render(board: dict, season: dict, machine: dict, env, outdir: Path, build_info: dict) -> None:
+def render(board: dict, season: dict, machine: dict, env, outdir: Path, build_info: dict,
+           home_at_root: bool = False) -> None:
+    """With `home_at_root`, the board's home is also the site's index (the arena's own index is then
+    arena.html, which lka.py build-site --quiet-home writes)."""
     if board.get("schema") != BOARD_SCHEMA:
         raise SiteError(f"board.json is {board.get('schema')!r}; this site renders {BOARD_SCHEMA}: score it again with quiet-score")
     env.filters.update({"factor": charts.factor_text, "seconds": fmt_seconds, "bytes": fmt_bytes,
                         "joules": fmt_joules})
-    env.globals.update({"rank_label": rank_label, "interval_text": interval_text, "fmt_quantity": fmt_quantity})
+    env.globals.update({"rank_label": rank_label, "interval_text": interval_text, "fmt_quantity": fmt_quantity,
+                        "arena_index": "arena.html" if home_at_root else "./"})
     root = Path(outdir) / QUIET_DIR
     root.mkdir(parents=True, exist_ok=True)
     (root / "board.json").write_text(json.dumps(board, indent=1, sort_keys=True) + "\n")
@@ -214,46 +218,49 @@ def render(board: dict, season: dict, machine: dict, env, outdir: Path, build_in
         "progress_pct": 100.0 * board["progress"]["measured"] / max(board["progress"]["needed"], 1),
     }
 
-    ranked_overall = forest_rows(board, "overall", "")
-    multi = next((c for c in categories if c["id"] == "multi-core"), None)
-    memory = next((c for c in categories if c["id"] == "memory"), None)
-    points = []
-    if multi and memory:
-        for entry in board["checkers"]:
-            m, r = entry["categories"].get("multi-core", {}), entry["categories"].get("memory", {})
-            if entry["ranked"] and m.get("factor") and r.get("factor"):
-                points.append({"name": entry["name"], "x": m["factor"], "y": r["factor"]})
-    pareto_svg = charts.pareto(pareto_2d(points), title="Speed and memory",
-                               x_label="faster with 4 cores (× official)", y_label="less memory (× official)",
-                               subtitle="Each ranked checker; those no other checker beats on both axes are labelled.")
-    overall_names = [r["name"] for r in ranked_overall]
-    h2h = board["head_to_head"].get("overall", {})
-    scaling = sorted(((e["name"], e["scaling"]["speedup"]) for e in board["checkers"]
-                      if e["scaling"] and e["ranked"]), key=lambda item: -item[1])
-    sensitivity = [(r["name"], entries[r["name"]]["sensitivity"]["at"],
-                    entries[r["name"]]["sensitivity"]["best"], entries[r["name"]]["sensitivity"]["worst"])
-                   for r in ranked_overall if entries[r["name"]].get("sensitivity")]
+    def home(prefix: str, root_path: str) -> dict:
+        ranked_overall = forest_rows(board, "overall", prefix)
+        multi = next((c for c in categories if c["id"] == "multi-core"), None)
+        memory = next((c for c in categories if c["id"] == "memory"), None)
+        points = []
+        if multi and memory:
+            for entry in board["checkers"]:
+                m, r = entry["categories"].get("multi-core", {}), entry["categories"].get("memory", {})
+                if entry["ranked"] and m.get("factor") and r.get("factor"):
+                    points.append({"name": entry["name"], "x": m["factor"], "y": r["factor"]})
+        pareto_svg = charts.pareto(pareto_2d(points), title="Speed and memory",
+                                   x_label="faster with 4 cores (× official)", y_label="less memory (× official)",
+                                   subtitle="Each ranked checker; those no other checker beats on both axes are labelled.")
+        overall_names = [r["name"] for r in ranked_overall]
+        h2h = board["head_to_head"].get("overall", {})
+        scaling = sorted(((e["name"], e["scaling"]["speedup"]) for e in board["checkers"]
+                          if e["scaling"] and e["ranked"]), key=lambda item: -item[1])
+        sensitivity = [(r["name"], entries[r["name"]]["sensitivity"]["at"],
+                        entries[r["name"]]["sensitivity"]["best"], entries[r["name"]]["sensitivity"]["worst"])
+                       for r in ranked_overall if entries[r["name"]].get("sensitivity")]
+        return {
+            **common, "root_path": root_path, "quiet_root": prefix, "nav": "board",
+            "tiles": [{"category": c, "leaders": leaders(board, c["id"])} for c in categories],
+            "overall_svg": _svg(charts.forest(ranked_overall, title="Overall",
+                                              subtitle="Weighted geometric mean over every metric and family, 95% bootstrap intervals")),
+            "overall_rows": ranked_overall,
+            "overall_unranked": unranked(board, "overall", baselines),
+            "grid": rank_grid(board),
+            "pareto_svg": _svg(pareto_svg), "pareto_points": points,
+            "h2h_svg": _svg(charts.heatmap(overall_names, h2h, title="Head to head, overall",
+                                           subtitle="How often the row checker scores better than the column checker over the bootstrap replicates")),
+            "h2h_names": overall_names, "h2h": h2h,
+            "scaling_svg": _svg(charts.scaled_bars(scaling, title="Speed-up from one core to four", ideal=4.0, unit="×",
+                                                   subtitle="Weighted geometric mean of 1-core time over 4-core time")),
+            "scaling": scaling,
+            "sensitivity_svg": _svg(charts.range_bars(sensitivity, title="Rank under other weightings",
+                                                      subtitle="Each metric and family weight halved and raised by half")),
+            "sensitivity": sensitivity,
+        }
 
-    tiles = [{"category": c, "leaders": leaders(board, c["id"])} for c in categories]
-    context = {
-        **common, "root_path": "../", "quiet_root": "", "nav": "board", "tiles": tiles,
-        "overall_svg": _svg(charts.forest(forest_rows(board, "overall", ""), title="Overall",
-                                          subtitle="Weighted geometric mean over every metric and family, 95% bootstrap intervals")),
-        "overall_rows": ranked_overall,
-        "overall_unranked": unranked(board, "overall", baselines),
-        "grid": rank_grid(board),
-        "pareto_svg": _svg(pareto_svg), "pareto_points": points,
-        "h2h_svg": _svg(charts.heatmap(overall_names, h2h, title="Head to head, overall",
-                                       subtitle="How often the row checker scores better than the column checker over the bootstrap replicates")),
-        "h2h_names": overall_names, "h2h": h2h,
-        "scaling_svg": _svg(charts.scaled_bars(scaling, title="Speed-up from one core to four", ideal=4.0, unit="×",
-                                               subtitle="Weighted geometric mean of 1-core time over 4-core time")),
-        "scaling": scaling,
-        "sensitivity_svg": _svg(charts.range_bars(sensitivity, title="Rank under other weightings",
-                                                  subtitle="Each metric and family weight halved and raised by half")),
-        "sensitivity": sensitivity,
-    }
-    env.get_template("quiet/index.html").stream(context).dump(str(root / "index.html"))
+    env.get_template("quiet/index.html").stream(home("", "../")).dump(str(root / "index.html"))
+    if home_at_root:
+        env.get_template("quiet/index.html").stream(home(f"{QUIET_DIR}/", "")).dump(str(Path(outdir) / "index.html"))
 
     for category in categories:
         directory = root / "category" / category["id"]

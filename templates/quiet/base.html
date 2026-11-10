@@ -19,7 +19,7 @@
             <a href="{{ quiet_root }}./#checkers" {% if nav == 'checkers' %}aria-current="page"{% endif %}>Checkers</a>
             <a href="{{ quiet_root }}methodology/" {% if nav == 'methodology' %}aria-current="page"{% endif %}>Methodology</a>
             <a href="{{ quiet_root }}board.json">Data</a>
-            <a href="{{ root_path }}./">Arena board</a>
+            <a href="{{ root_path }}{{ arena_index }}">Arena board</a>
         </nav>
         <button class="theme-toggle" type="button" aria-label="Switch between light and dark">◐ Theme</button>
     </div>
@@ -37,7 +37,7 @@
 </main>
 <footer class="foot">
     <div class="wrap">
-        <p>The Quiet Board is an unofficial companion to the <a href="{{ root_path }}./">Lean Kernel Arena</a>: the same checkers, built from their
+        <p>The Quiet Board is an unofficial companion to the <a href="{{ root_path }}{{ arena_index }}">Lean Kernel Arena</a>: the same checkers, built from their
         Arena entries as written, and the same test inputs, byte for byte, measured on one dedicated machine under rules fixed before the season's first run.</p>
         <p>Run by Tristen Harr, whose own checker, logos-kernel, competes here. It is built and measured exactly like every other entry; every raw run,
         the scoring code and the machine's configuration are published, so anyone can re-score the board or measure it again.</p>

@@ -1,6 +1,7 @@
-# Keeps the fork's master level with leanprover/lean-kernel-arena: new checkers, new tests and fixes
-# reach the quiet board the day they land upstream. Inert unless the repository variable QUIET_BOARD is
-# "on". A conflict stops the sync and fails the run; nothing is forced.
+# Keeps the fork's master level with leanprover/lean-kernel-arena, nightly, and starts the quiet board
+# whenever upstream brought something new: new checkers and tests reach the board the day they land.
+# A merge conflict stops the sync and fails the run; nothing is forced. Inert unless the repository
+# variable QUIET_BOARD is "on".
 name: Sync upstream
 
 on:
@@ -10,6 +11,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   sync:
@@ -21,6 +23,7 @@ jobs:
           ref: master
           fetch-depth: 0
       - name: Merge upstream master
+        id: merge
         run: |
           git config user.name "quiet-board sync"
           git config user.email "quiet-board-sync@users.noreply.github.com"
@@ -28,7 +31,15 @@ jobs:
           git fetch upstream master
           if git merge-base --is-ancestor upstream/master HEAD; then
             echo "already level with upstream"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git merge --no-edit upstream/master
           git push origin HEAD:master
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+      # A push made with the workflow token starts no workflow, so the board is started explicitly.
+      - name: Start the quiet board
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run quiet-board.yml --ref master

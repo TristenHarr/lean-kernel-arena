@@ -68,6 +68,14 @@ nix develop --command python3 lka.py build-site --results results.json --board _
 7. In the repository: set the variable `QUIET_BOARD` to `on`, enable Pages from GitHub Actions,
    require approval for workflows from outside collaborators, and disable `build-and-deploy.yml`
    (it deploys the official Arena's Pages).
+8. Run the **Quiet board setup** workflow once: it merges every checker and test from
+   leanprover/lean-kernel-arena, rebuilds every checker on the box and starts measuring.
+
+From then on the board triggers as the arena's own site does: a push to `master` builds, measures,
+scores and deploys (with the quiet board as the home page and the official board at `arena.html`);
+a pull request is checked on GitHub's runners and never reaches the box; a manual run can rebuild
+every checker. The nightly sync merges upstream and starts the board when something new landed, and
+a nightly run continues a round that one job could not finish.
 
 Any change to the machine (kernel, firmware, microcode, the clock, the helper) is a new epoch:
 `lka-preflight --check` refuses to start until a new epoch is written on purpose, and runs of
