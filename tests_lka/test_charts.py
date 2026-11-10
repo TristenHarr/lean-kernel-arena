@@ -131,6 +131,40 @@ class Pareto(unittest.TestCase):
         self.assertEqual(len(front), 1)
 
 
+class ParetoLabels(unittest.TestCase):
+    def test_labels_of_neighbouring_points_do_not_collide(self):
+        from lka_quiet.charts import label_width
+        points = [
+            {"name": "sokonanoda", "x": 8.4, "y": 1.6, "pareto": True},
+            {"name": "nano-lean", "x": 9.9, "y": 1.6, "pareto": True},
+            {"name": "kefir", "x": 3.5, "y": 3.2, "pareto": True},
+            {"name": "other", "x": 1.0, "y": 1.0, "pareto": False},
+        ]
+        root = parse(pareto(points, title="t", x_label="x", y_label="y"))
+        boxes = []
+        for t in root.iter("{http://www.w3.org/2000/svg}text"):
+            if "direct-label" not in t.get("class", ""):
+                continue
+            x, y, text = float(t.get("x")), float(t.get("y")), t.text
+            w = label_width(text)
+            x0 = x - w if t.get("text-anchor") == "end" else x
+            boxes.append((x0, y - 11, x0 + w, y + 3, text))
+        self.assertEqual(len(boxes), 3)
+        for i, a in enumerate(boxes):
+            for b in boxes[i + 1:]:
+                overlap = a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+                self.assertFalse(overlap, (a, b))
+
+    def test_a_moved_label_gets_a_leader(self):
+        # three points a few pixels apart at one height: the middle label fits neither left nor right
+        points = [{"name": "first", "x": 8.0, "y": 1.6, "pareto": True},
+                  {"name": "middle", "x": 8.4, "y": 1.6, "pareto": True},
+                  {"name": "last", "x": 8.8, "y": 1.6, "pareto": True}]
+        root = parse(pareto(points, title="t", x_label="x", y_label="y"))
+        leaders = [l for l in root.iter("{http://www.w3.org/2000/svg}line") if "leader" in l.get("class", "")]
+        self.assertGreaterEqual(len(leaders), 1)
+
+
 class Strip(unittest.TestCase):
     def test_families_are_rows_and_failures_are_marked(self):
         groups = [

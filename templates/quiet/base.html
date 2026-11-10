@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Quiet Board{% endblock %} · Lean Kernel Arena</title>
+    <meta name="description" content="Every Lean Kernel Arena checker measured on one dedicated, silent machine: wall time on one core and on four, peak memory and energy, ranked with 95% intervals.">
+    <meta name="color-scheme" content="light dark">
+    <link rel="stylesheet" href="{{ root_path }}static/quiet.css">
+    <script src="{{ root_path }}static/quiet.js" defer></script>
+</head>
+<body>
+<header class="top">
+    <div class="wrap">
+        <a class="brand" href="{{ quiet_root }}./">Quiet Board<small>Lean Kernel Arena · unofficial</small></a>
+        <nav class="nav" aria-label="Quiet Board">
+            <a href="{{ quiet_root }}./" {% if nav == 'board' %}aria-current="page"{% endif %}>Board</a>
+            <a href="{{ quiet_root }}category/overall/" {% if nav == 'categories' %}aria-current="page"{% endif %}>Categories</a>
+            <a href="{{ quiet_root }}./#checkers" {% if nav == 'checkers' %}aria-current="page"{% endif %}>Checkers</a>
+            <a href="{{ quiet_root }}methodology/" {% if nav == 'methodology' %}aria-current="page"{% endif %}>Methodology</a>
+            <a href="{{ quiet_root }}board.json">Data</a>
+            <a href="{{ root_path }}./">Arena board</a>
+        </nav>
+        <button class="theme-toggle" type="button" aria-label="Switch between light and dark">◐ Theme</button>
+    </div>
+</header>
+<main class="wrap">
+    {% if preview %}
+    <div class="notice" role="note">
+        <span class="icon" aria-hidden="true">⚠</span>
+        <div><strong>Preview, not quiet-box measurements.</strong>
+        These pages are drawn from {{ preview.source }} (revision <span class="mono">{{ preview.arena_revision[:12] }}</span>):
+        {{ preview.note }}</div>
+    </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+</main>
+<footer class="foot">
+    <div class="wrap">
+        <p>The Quiet Board is an unofficial companion to the <a href="{{ root_path }}./">Lean Kernel Arena</a>: the same checkers, built from their
+        Arena entries as written, and the same test inputs, byte for byte, measured on one dedicated machine under rules fixed before the season's first run.</p>
+        <p>Run by Tristen Harr, whose own checker, logos-kernel, competes here. It is built and measured exactly like every other entry; every raw run,
+        the scoring code and the machine's configuration are published, so anyone can re-score the board or measure it again.</p>
+        <p class="muted">Season {{ board.season }} · epoch <span class="mono">{{ board.epoch }}</span> · generated {{ build_info.timestamp }}
+        {% if build_info.git_revision_short %} · revision <a href="{{ build_info.github_url or '#' }}" class="mono">{{ build_info.git_revision_short }}</a>{% endif %}</p>
+    </div>
+</footer>
+</body>
+</html>

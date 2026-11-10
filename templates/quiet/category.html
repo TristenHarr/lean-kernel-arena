@@ -1,0 +1,62 @@
+{% extends "quiet/base.html" %}
+{% block title %}{{ category.title }}{% endblock %}
+{% block content %}
+<p class="muted"><a href="{{ quiet_root }}./">Board</a> · Category</p>
+<h1>{{ category.title }}</h1>
+<p class="lede">{{ description }}</p>
+
+<nav class="tiles" aria-label="Categories" style="grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); margin-bottom: 12px;">
+    {% for other in categories %}
+    <a class="tile" style="min-height: 0; padding: 8px 12px;{% if other.id == category.id %} border-color: var(--s1);{% endif %}" href="{{ quiet_root }}category/{{ other.id }}/"
+       {% if other.id == category.id %}aria-current="page"{% endif %}><span class="label">{{ other.title }}</span></a>
+    {% endfor %}
+</nav>
+
+<div class="table-card" style="margin: 16px 0;">
+    <table class="data">
+        <thead><tr><th>Metric</th><th class="n">Weight</th><th>Family</th><th class="n">Weight</th></tr></thead>
+        <tbody>
+        {% set metric_items = category.metrics | dictsort %}
+        {% set family_items = category.families | dictsort %}
+        {% for i in range([metric_items | length, family_items | length] | max) %}
+        <tr>
+            {% if i < metric_items | length %}<td>{{ metrics[metric_items[i][0]].title }}</td><td class="n">{{ '%.3f' % metric_items[i][1] }}</td>{% else %}<td></td><td></td>{% endif %}
+            {% if i < family_items | length %}<td>{{ board.families[family_items[i][0]].title }}</td><td class="n">{{ '%.3f' % family_items[i][1] }}</td>{% else %}<td></td><td></td>{% endif %}
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<figure class="chart-card">
+    <div class="scroll-x">{{ forest_svg }}</div>
+    <figcaption>Factor over {{ board.reference }} with its 95% bootstrap interval; "=" marks a rank shared with a checker the data cannot separate.</figcaption>
+    <details class="twin" open><summary>Table</summary>
+        <table class="data">
+            <thead><tr><th>Rank</th><th>Checker</th><th class="n">Factor</th><th class="n">95% interval</th><th class="n">Places it can hold (95%)</th></tr></thead>
+            <tbody>
+            {% for row in rows %}
+            {% set result = results[row.name] %}
+            <tr><td class="n">{{ row.rank }}</td><td><a href="{{ quiet_root }}checker/{{ row.name }}/">{{ row.name }}</a></td>
+                <td class="n">{{ row.factor | factor }}</td><td class="n">[{{ '%.3g' % row.lo }}, {{ '%.3g' % row.hi }}]</td>
+                <td class="n">{{ result.rank_lo }}–{{ result.rank_hi }}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </details>
+</figure>
+
+{% if unranked %}
+<h2>Not ranked here</h2>
+<div class="table-card">
+    <table class="data">
+        <thead><tr><th>Checker</th><th>Why</th><th class="n">Factor</th></tr></thead>
+        <tbody>{% for row in unranked %}<tr><td><a href="{{ quiet_root }}checker/{{ row.name }}/">{{ row.name }}</a></td><td>{{ row.why }}</td><td class="n">{{ row.interval }}</td></tr>{% endfor %}</tbody>
+    </table>
+</div>
+{% endif %}
+
+<h2>Head to head</h2>
+<p class="section-note">How often the row checker beats the column checker in this category over the bootstrap replicates.</p>
+<figure class="chart-card"><div class="scroll-x">{{ h2h_svg }}</div></figure>
+{% endblock %}

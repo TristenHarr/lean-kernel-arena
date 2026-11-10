@@ -1,0 +1,72 @@
+{% extends "quiet/base.html" %}
+{% block title %}{{ entry.name }}{% endblock %}
+{% block content %}
+<p class="muted"><a href="{{ quiet_root }}./">Board</a> · Checker</p>
+<h1>{{ entry.name }}</h1>
+<p class="lede">
+    {% if entry.reference %}The reference: every factor on this board is relative to this checker.
+    {% elif not entry.ranked %}Not ranked:
+        {% if entry.gates.unsound %}<span class="badge critical">accepted invalid proofs: {{ entry.gates.unsound | join(', ') }}</span>{% endif %}
+        {% if entry.gates.wrong_rejects %}<span class="badge serious">rejected valid proofs: {{ entry.gates.wrong_rejects | join(', ') }}</span>{% endif %}
+        {% if not entry.gates.unsound and not entry.gates.wrong_rejects %}shown for comparison.{% endif %}
+    {% else %}{% set o = entry.categories.overall %}
+        {% if o.rank %}Overall rank {{ rank_label(o) }} ({{ o.rank_lo }}–{{ o.rank_hi }} at 95%): {{ interval_text(o) }} better than {{ board.reference }}.{% else %}Still being measured.{% endif %}
+        {% if entry.pareto %}<span class="badge accent">Pareto-optimal</span>{% endif %}
+    {% endif %}
+</p>
+{% if meta.url %}<p class="muted">Source: <a href="{{ meta.url }}">{{ meta.url }}</a>{% if meta.rev %} at <span class="mono">{{ meta.rev[:12] }}</span>{% endif %}{% if meta.threads %} · declares {{ meta.threads }} threads{% endif %}</p>{% endif %}
+
+<h2>Categories</h2>
+<div class="table-card">
+    <table class="data">
+        <thead><tr><th>Category</th><th class="n">Rank</th><th class="n">Places it can hold (95%)</th><th class="n">Factor</th><th class="n">95% interval</th></tr></thead>
+        <tbody>
+        {% for category in categories %}{% set r = entry.categories[category.id] %}
+        <tr><td><a href="{{ quiet_root }}category/{{ category.id }}/">{{ category.title }}</a></td>
+            <td class="n">{{ rank_label(r) }}</td>
+            <td class="n">{% if r.rank %}{{ r.rank_lo }}–{{ r.rank_hi }}{% else %}–{% endif %}</td>
+            <td class="n">{% if r.factor %}{{ r.factor | factor }}{% else %}–{% endif %}</td>
+            <td class="n">{% if r.factor_lo %}[{{ '%.3g' % r.factor_lo }}, {{ '%.3g' % r.factor_hi }}]{% else %}–{% endif %}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if entry.scaling or entry.sensitivity %}
+<dl class="strip" style="margin-top: 16px;">
+    {% if entry.scaling %}<div><dt>Speed-up, 1 → 4 cores</dt><dd class="v num">{{ '%.2f' % entry.scaling.speedup }}× ({{ '%.0f' % (entry.scaling.efficiency * 100) }}% efficient)</dd></div>{% endif %}
+    {% if entry.sensitivity %}<div><dt>Overall rank under other weightings</dt><dd class="v num">{{ entry.sensitivity.best }}–{{ entry.sensitivity.worst }}</dd></div>{% endif %}
+    <div><dt>Runs repeated as invalid</dt><dd class="v num">{{ entry.invalid_runs }}</dd></div>
+    {% if entry.flaky %}<div><dt>Verdict varies</dt><dd class="v">{{ entry.flaky | join(', ') }}</dd></div>{% endif %}
+</dl>
+{% endif %}
+
+<h2>Test by test</h2>
+<p class="section-note">Each dot is one scored test: its factor against {{ board.reference }} (right is better), in rows by family. Failed tests sit in the left gutter;
+they are scored at twice the test's own time limit.</p>
+{% for strip in strips %}
+<h3>{{ strip.metric.title }}</h3>
+<figure class="chart-card">
+    <div class="scroll-x">{{ strip.svg }}</div>
+</figure>
+{% endfor %}
+
+<h3>Every scored test</h3>
+<div class="table-card">
+    <table class="data">
+        <thead><tr><th>Test</th><th>Family</th>
+            {% for metric_id, metric in metrics.items() %}{% if metric.available %}<th class="n">{{ metric.title }}</th><th class="n">× ref</th>{% endif %}{% endfor %}</tr></thead>
+        <tbody>
+        {% for test in tests %}
+        <tr><td class="mono">{{ test.name }}</td><td>{{ board.families[test.family].title if test.family in board.families else '' }}</td>
+            {% for metric_id, metric in metrics.items() %}{% if metric.available %}{% set cell = test.metrics.get(metric_id) %}
+            {% if cell %}
+            <td class="n">{% if cell.failed %}<span class="badge serious">failed</span>{% else %}{{ fmt_quantity(cell.value, metric.quantity) }}{% endif %}</td>
+            <td class="n">{% if cell.ratio and not cell.failed %}{{ (1 / cell.ratio) | factor }}{% else %}–{% endif %}</td>
+            {% else %}<td class="n">–</td><td class="n">–</td>{% endif %}
+            {% endif %}{% endfor %}</tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

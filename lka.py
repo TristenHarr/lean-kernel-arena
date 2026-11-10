@@ -2730,8 +2730,14 @@ def cmd_build_site(args: argparse.Namespace) -> int:
     else:
         tarball_info = create_test_tarball(tests, output_dir)
 
+    quiet_board = None
+    if args.board:
+        with open(args.board, "r") as f:
+            quiet_board = json.load(f)
+
     # Build context data
     data = {
+        "quiet_board": quiet_board,
         "tests": tests,
         "test_rows": test_rows,
         "checkers": checkers,
@@ -2949,6 +2955,16 @@ def cmd_build_site(args: argparse.Namespace) -> int:
     if static_dir.exists():
         shutil.copytree(static_dir, output_dir / "static", dirs_exist_ok=True)
         print(f"Copied static files to: {output_dir / 'static'}")
+
+    if quiet_board is not None:
+        from lka_quiet import site as quiet_site
+        season_file = Path(args.season) if args.season else get_project_root() / "scoring" / f"{quiet_board['season']}.yaml"
+        season = yaml.safe_load(season_file.read_text())
+        machine = dict(quiet_board.get("machine") or {})
+        if args.machine:
+            machine.update(yaml.safe_load(Path(args.machine).read_text()))
+        quiet_site.render(quiet_board, season, machine, env, output_dir, build_info)
+        print(f"Generated: {output_dir / quiet_site.QUIET_DIR}/")
 
     print(f"\nSite built successfully in: {output_dir}")
     return 0
@@ -3227,6 +3243,21 @@ def main() -> int:
         "--zenodo-deposition",
         metavar="ID",
         help="Zenodo deposition id of this round, recorded in results.json so the next round can be created as a new version of it",
+    )
+    build_site_parser.add_argument(
+        "--board",
+        metavar="FILE",
+        help="Also render the quiet board under quiet/ from this board.json (see quiet-score)",
+    )
+    build_site_parser.add_argument(
+        "--season",
+        metavar="FILE",
+        help="The quiet board's scoring rules (default: scoring/<the board's season>.yaml)",
+    )
+    build_site_parser.add_argument(
+        "--machine",
+        metavar="FILE",
+        help="The quiet board's machine profile, shown on its methodology page",
     )
 
     # build-rounds-index command

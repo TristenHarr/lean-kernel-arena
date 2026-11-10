@@ -1,0 +1,208 @@
+{% extends "quiet/base.html" %}
+{% block title %}Methodology{% endblock %}
+{% block content %}
+<p class="muted"><a href="{{ quiet_root }}./">Board</a> · Methodology</p>
+<h1>How the Quiet Board measures and ranks</h1>
+<p class="lede">The board measures what a checker's users live with: how long they wait, on one core and on four, how much memory it takes,
+how much energy it burns, and whether it ever accepts a false proof. When the measure is the thing itself, optimising for the board
+is optimising the checker.</p>
+
+<div class="prose">
+<h2 id="principles">Principles</h2>
+<ul>
+    <li><strong>Measure the target.</strong> Wall time, peak memory and energy on real libraries are scored; instruction and cycle counts are recorded
+        for every run and shown, but they are a means, not the end.</li>
+    <li><strong>Many orthogonal measures.</strong> Specialising in one costs on the others; a checker no one beats on all four at once is marked Pareto-optimal.</li>
+    <li><strong>Breadth with bounded weight.</strong> Whole libraries, stress tests and small files each carry a fixed share; within a family every test weighs the same,
+        except Mathlib, which carries half of the libraries' share.</li>
+    <li><strong>Honest uncertainty.</strong> Every factor carries a 95% interval and every rank an interval; checkers the data cannot separate share a rank.</li>
+    <li><strong>Runs that prove their conditions.</strong> A run that ran at the wrong frequency, was throttled, shared its cores or had a counter multiplexed is
+        kept for the record and repeated; it never reaches a median.</li>
+    <li><strong>Rules fixed in advance.</strong> A season's scoring file is committed before its first run; changing it starts a new season.</li>
+    <li><strong>Everything published.</strong> Every run record, the machine's configuration and the scoring code are public; the board re-scores to the same bytes.</li>
+</ul>
+
+<h2 id="machine">The machine</h2>
+<p>One dedicated mini PC that does nothing else. CPU 0 keeps the system, the runner, the measurement helper and every interrupt; the four-core lane is
+the whole machine, the one-core lane is CPU 3 alone. The clock is pinned to the highest frequency the machine holds on all cores for two hours without
+throttling, so a second of wall time means the same thing in every run and every week.</p>
+</div>
+<div class="table-card">
+    <table class="data">
+        <tbody>
+        <tr><th>Profile</th><td class="mono">{{ machine.name }}</td></tr>
+        <tr><th>Processor</th><td>{{ machine.cpu or '–' }}</td></tr>
+        {% if machine.lanes %}<tr><th>Lanes</th><td>{% for lane, cpus in machine.lanes | dictsort %}{{ lane }}: CPUs {{ cpus | join(', ') }}{% if not loop.last %}; {% endif %}{% endfor %}</td></tr>{% endif %}
+        {% if machine.housekeeping %}<tr><th>Housekeeping</th><td>CPU {{ machine.housekeeping | join(', ') }}</td></tr>{% endif %}
+        {% if machine.frequency %}<tr><th>Clock</th><td>{% if machine.frequency.pinned_hz %}{{ '%.3f' % (machine.frequency.pinned_hz / 1e9) }} GHz, pinned; a run must hold it within ±{{ '%.1f' % (machine.frequency.tolerance * 100) }}%{% else %}to be calibrated{% endif %}</td></tr>{% endif %}
+        {% if machine.memory %}<tr><th>Memory limit</th><td>{{ machine.memory.max_bytes | bytes }} per run, no swap</td></tr>{% endif %}
+        {% if machine.energy %}<tr><th>Energy</th><td>{% if machine.energy.rapl_domain %}RAPL package counter <span class="mono">{{ machine.energy.rapl_domain }}</span>{% else %}not measured{% endif %}</td></tr>{% endif %}
+        </tbody>
+    </table>
+</div>
+
+<div class="prose">
+<h2 id="run">One run</h2>
+<p>A checker runs as its own user, in its own network namespace (loopback only) and mount namespace, with its home behind an overlay whose writes vanish when
+the run ends, so no run can leave anything for the next and no checker can reach another's build. It gets the same environment block, byte for byte in size,
+whichever checker and test it is, because the size of the environment moves the initial stack and with it the alignment of everything a program puts there.</p>
+</div>
+<figure class="chart-card">
+    <svg class="chart" viewBox="0 0 780 190" width="100%" role="img" aria-labelledby="chain-t">
+        <title id="chain-t">The measurement chain of one run</title>
+        <g>
+            <rect x="8" y="40" width="150" height="92" rx="8" class="hit" style="stroke: var(--axis); fill: var(--surface-2)"/>
+            <text x="83" y="64" text-anchor="middle" class="name">lka-measure</text>
+            <text x="83" y="84" text-anchor="middle" class="tick">root, CPU 0</text>
+            <text x="83" y="102" text-anchor="middle" class="tick">cgroup, caps, RAPL,</text>
+            <text x="83" y="118" text-anchor="middle" class="tick">throttle, IRQ, acct</text>
+            <rect x="198" y="40" width="150" height="92" rx="8" class="hit" style="stroke: var(--axis); fill: var(--surface-2)"/>
+            <text x="273" y="64" text-anchor="middle" class="name">perf stat</text>
+            <text x="273" y="84" text-anchor="middle" class="tick">counters start off,</text>
+            <text x="273" y="102" text-anchor="middle" class="tick">inherited by every</text>
+            <text x="273" y="118" text-anchor="middle" class="tick">process and thread</text>
+            <rect x="388" y="40" width="170" height="92" rx="8" class="hit" style="stroke: var(--axis); fill: var(--surface-2)"/>
+            <text x="473" y="64" text-anchor="middle" class="name">lka-shim</text>
+            <text x="473" y="84" text-anchor="middle" class="tick">lane cpuset, namespaces,</text>
+            <text x="473" y="102" text-anchor="middle" class="tick">drops to the checker's user,</text>
+            <text x="473" y="118" text-anchor="middle" class="tick">switches counters on</text>
+            <rect x="598" y="40" width="174" height="92" rx="8" class="hit" style="stroke: var(--s1); fill: var(--surface)"/>
+            <text x="685" y="64" text-anchor="middle" class="name">the checker</text>
+            <text x="685" y="84" text-anchor="middle" class="tick">sh -c "&lt;run line&gt;"</text>
+            <text x="685" y="102" text-anchor="middle" class="tick">timed exec → waitpid</text>
+            <text x="685" y="118" text-anchor="middle" class="tick">on CLOCK_MONOTONIC</text>
+            <line x1="158" y1="86" x2="198" y2="86" class="axis"/><line x1="348" y1="86" x2="388" y2="86" class="axis"/><line x1="558" y1="86" x2="598" y2="86" class="axis"/>
+            <text x="390" y="170" text-anchor="middle" class="tick">The shim's own start-up is never counted; perf is told when to count over its control FIFO.</text>
+        </g>
+    </svg>
+</figure>
+
+<div class="prose">
+<p>Every run must prove the conditions it was measured under, or it is repeated:</p>
+<div class="formula">
+<math display="block"><mrow>
+  <mo>|</mo><mfrac><mrow><msub><mtext>cycles</mtext><mi>u</mi></msub><mo>+</mo><msub><mtext>cycles</mtext><mi>k</mi></msub></mrow><mrow><mtext>task-clock</mtext><mo>·</mo><msub><mi>f</mi><mtext>pinned</mtext></msub></mrow></mfrac><mo>−</mo><mn>1</mn><mo>|</mo>
+  <mo>≤</mo><mn>0.5</mn><mi>%</mi><mo>,</mo><mspace width="1.2em"/>
+  <munder><mo movablelimits="false">∑</mo><mrow><mi>p</mi><mo>∈</mo><mtext>lane</mtext></mrow></munder><msub><mtext>busy</mtext><mi>p</mi></msub><mo>−</mo><mtext>CPU</mtext><mo>(</mo><mtext>run</mtext><mo>)</mo>
+  <mo>≤</mo><mi>max</mi><mo>(</mo><mn>20</mn><mtext> ms</mtext><mo>,</mo><mn>0.5</mn><mi>%</mi><mo>·</mo><mtext>wall</mtext><mo>·</mo><mo>|</mo><mtext>lane</mtext><mo>|</mo><mo>)</mo>
+</mrow></math>
+</div>
+<p>no thermal-throttle event during the run, and every hardware counter counted the whole time (never a multiplexed estimate). On hybrid processors perf
+scales each core type's count by its share of the run; the board undoes that scaling and adds the core types, which is exact.</p>
+<p>A verdict is the checker's exit code, as on the Arena (0 accept, 1 reject, 2 decline), with one difference: a run in which any of the checker's processes
+died of a failure signal or of memory is an error, whatever exit code a wrapper made of it. Process accounting sees every process the checker started.</p>
+
+<h2 id="repetitions">How many runs</h2>
+<p>Each checker runs each test on each lane in passes, every pass visiting every unfinished cell once in an order drawn from the round and the pass number, so
+slow drift of the machine falls on all checkers alike. A cell's statistic is its median, bounded by the interval that holds for any continuous distribution:</p>
+<div class="formula">
+<math display="block"><mrow>
+  <mo>[</mo><msub><mi>x</mi><mrow><mo>(</mo><mi>k</mi><mo>)</mo></mrow></msub><mo>,</mo><msub><mi>x</mi><mrow><mo>(</mo><mi>n</mi><mo>−</mo><mi>k</mi><mo>+</mo><mn>1</mn><mo>)</mo></mrow></msub><mo>]</mo><mo>,</mo><mspace width="1em"/>
+  <mi>k</mi><mo>=</mo><mi>max</mi><mo>{</mo><mi>j</mi><mo>≥</mo><mn>1</mn><mo>:</mo>
+  <msup><mn>2</mn><mrow><mo>−</mo><mi>n</mi></mrow></msup><munder><mo movablelimits="false">∑</mo><mrow><mi>i</mi><mo>&lt;</mo><mi>j</mi></mrow></munder><mrow><mo>(</mo><mfrac linethickness="0"><mi>n</mi><mi>i</mi></mfrac><mo>)</mo></mrow>
+  <mo>≤</mo><mfrac><mrow><mn>1</mn><mo>−</mo><mi>γ</mi></mrow><mn>2</mn></mfrac><mo>}</mo>
+</mrow></math>
+</div>
+<p>with confidence <math><mi>γ</mi><mo>=</mo><mn>0.95</mn></math>. A small test runs at least {{ machine.repetitions.scored.n_min if machine.repetitions else 7 }} times and until
+the interval's half-width is within {{ '%.0f' % ((machine.repetitions.scored.ci_rel if machine.repetitions else 0.01) * 100) }}% of the median; a heavy one
+(over a minute) three times, more while the spread exceeds 1%. A timeout is final; so is a failure seen twice. A bad proof is run three times, and accepting
+it once is enough to be unsound.</p>
+
+<h2 id="score">The score</h2>
+<p>For each metric <math><mi>m</mi></math> (wall time on four cores, on one core, peak memory, energy), each family <math><mi>f</mi></math>
+and each test <math><mi>t</mi></math>, a checker <math><mi>c</mi></math> is compared with the reference <math><mi>r</mi></math> by a log ratio:</p>
+<div class="formula">
+<math display="block"><mrow>
+  <mi>S</mi><mo>(</mo><mi>c</mi><mo>)</mo><mo>=</mo>
+  <munder><mo movablelimits="false">∑</mo><mi>m</mi></munder><msub><mi>α</mi><mi>m</mi></msub>
+  <munder><mo movablelimits="false">∑</mo><mi>f</mi></munder><msub><mi>β</mi><mi>f</mi></msub>
+  <munder><mo movablelimits="false">∑</mo><mrow><mi>t</mi><mo>∈</mo><mi>f</mi></mrow></munder><msub><mi>w</mi><mrow><mi>f</mi><mo>,</mo><mi>t</mi></mrow></msub>
+  <mi>ln</mi><mo>⁡</mo><mfrac>
+    <mrow><mi>max</mi><mo>(</mo><msub><mi>x</mi><mi>m</mi></msub><mo>(</mo><mi>c</mi><mo>,</mo><mi>t</mi><mo>)</mo><mo>,</mo><msub><mi>φ</mi><mi>m</mi></msub><mo>)</mo></mrow>
+    <mrow><mi>max</mi><mo>(</mo><msub><mi>x</mi><mi>m</mi></msub><mo>(</mo><mi>r</mi><mo>,</mo><mi>t</mi><mo>)</mo><mo>,</mo><msub><mi>φ</mi><mi>m</mi></msub><mo>)</mo></mrow>
+  </mfrac><mo>,</mo><mspace width="1.5em"/>
+  <mtext>factor</mtext><mo>(</mo><mi>c</mi><mo>)</mo><mo>=</mo><msup><mi>e</mi><mrow><mo>−</mo><mi>S</mi><mo>(</mo><mi>c</mi><mo>)</mo></mrow></msup>
+</mrow></math>
+</div>
+<p>so a factor is a weighted geometric mean of how many times better than the reference the checker is. The weights of a category sum to one, as do
+<math><msub><mi>w</mi><mrow><mi>f</mi><mo>,</mo><mi>t</mi></mrow></msub></math> within each family. The floors
+<math><msub><mi>φ</mi><mi>m</mi></msub></math> ({{ (season.floors.wall_s * 1000) | int }} ms, {{ season.floors.memory_bytes | bytes }}, {{ season.floors.energy_j }} J) are the
+differences no one using a checker would notice. Because the reference enters every score as the same constant,</p>
+<div class="formula">
+<math display="block"><mrow>
+  <msub><mi>S</mi><msup><mi>r</mi><mo>′</mo></msup></msub><mo>(</mo><mi>c</mi><mo>)</mo><mo>=</mo><msub><mi>S</mi><mi>r</mi></msub><mo>(</mo><mi>c</mi><mo>)</mo><mo>−</mo><msub><mi>S</mi><mi>r</mi></msub><mo>(</mo><msup><mi>r</mi><mo>′</mo></msup><mo>)</mo>
+</mrow></math>
+</div>
+<p>and the order of the board is the same whichever checker is the reference (Fleming and Wallace, 1986). A good test a checker does not accept, by timeout,
+error, decline or memory, is scored at twice its cap, as the SAT Competition's PAR-2:</p>
+<div class="formula">
+<math display="block"><mrow>
+  <msub><mi>x</mi><mtext>time</mtext></msub><mo>=</mo><mn>2</mn><msub><mi>T</mi><mi>t</mi></msub><mo>,</mo><mspace width="1em"/>
+  <msub><mi>x</mi><mtext>memory</mtext></msub><mo>=</mo><mn>2</mn><mi>M</mi><mo>,</mo><mspace width="1em"/>
+  <msub><mi>x</mi><mtext>energy</mtext></msub><mo>=</mo><mn>2</mn><mover><mi>P</mi><mo>^</mo></mover><msub><mi>T</mi><mi>t</mi></msub>
+</mrow></math>
+</div>
+<p>where <math><msub><mi>T</mi><mi>t</mi></msub></math> is the test's own time limit: a shorter limit a checker sets for itself may end its run sooner, but it
+never lowers what the failure costs.</p>
+</div>
+
+<h3>Season {{ season.season }}: the weights</h3>
+<div class="table-card">
+    <table class="data">
+        <thead><tr><th>Category</th>{% for metric_id, metric in season.metrics.items() %}<th class="n">{{ metric.title }}</th>{% endfor %}
+            {% for family_id, family in season.families.items() %}{% if family_id != 'mathlib' %}<th class="n">{{ family.title }}</th>{% endif %}{% endfor %}<th class="n">Mathlib only</th></tr></thead>
+        <tbody>
+        {% for category in season.categories %}
+        <tr><td><a href="{{ quiet_root }}category/{{ category.id }}/">{{ category.title }}</a></td>
+            {% for metric_id, metric in season.metrics.items() %}<td class="n">{{ category.metrics.get(metric_id, '') }}</td>{% endfor %}
+            {% for family_id, family in season.families.items() %}{% if family_id != 'mathlib' %}<td class="n">{{ category.families.get(family_id, '') }}</td>{% endif %}{% endfor %}
+            <td class="n">{{ category.families.get('mathlib', '') }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="prose">
+<h2 id="uncertainty">Uncertainty and ranks</h2>
+<p>The board is redrawn {{ board.bootstrap.replicates }} times. Each replicate draws every cell's median from its exact bootstrap distribution,</p>
+<div class="formula">
+<math display="block"><mrow>
+  <mi>P</mi><mo>(</mo><msubsup><mi>X</mi><mrow><mo>(</mo><mi>k</mi><mo>)</mo></mrow><mo>*</mo></msubsup><mo>≤</mo><msub><mi>x</mi><mrow><mo>(</mo><mi>j</mi><mo>)</mo></mrow></msub><mo>)</mo><mo>=</mo>
+  <munderover><mo movablelimits="false">∑</mo><mrow><mi>i</mi><mo>=</mo><mi>k</mi></mrow><mi>n</mi></munderover>
+  <mrow><mo>(</mo><mfrac linethickness="0"><mi>n</mi><mi>i</mi></mfrac><mo>)</mo></mrow>
+  <msup><mrow><mo>(</mo><mfrac><mi>j</mi><mi>n</mi></mfrac><mo>)</mo></mrow><mi>i</mi></msup>
+  <msup><mrow><mo>(</mo><mn>1</mn><mo>−</mo><mfrac><mi>j</mi><mi>n</mi></mfrac><mo>)</mo></mrow><mrow><mi>n</mi><mo>−</mo><mi>i</mi></mrow></msup><mo>,</mo><mspace width="1em"/>
+  <mi>k</mi><mo>=</mo><mo>⌈</mo><mfrac><mi>n</mi><mn>2</mn></mfrac><mo>⌉</mo>
+</mrow></math>
+</div>
+<p>and redraws each family's tests with replacement (Mathlib, pinned to half of the libraries, stays), the same draws for every checker. A checker's factor
+interval is the middle 95% of its replicate factors against the reference's in the same replicates. Its rank is a set, the marginal confidence set of
+Mogstad, Romano, Shaikh and Wilhelm (2024): with <math><mi>N</mi></math> ranked checkers and <math><mi>α</mi><mo>=</mo><mn>1</mn><mo>−</mo><mi>γ</mi></math>,</p>
+<div class="formula">
+<math display="block"><mrow>
+  <mtext>rank</mtext><mo>(</mo><mi>c</mi><mo>)</mo><mo>∈</mo><mo>[</mo>
+  <mn>1</mn><mo>+</mo><mo>#</mo><mo>{</mo><mi>d</mi><mo>:</mo><msub><mover><mi>p</mi><mo>^</mo></mover><mrow><mi>d</mi><mi>c</mi></mrow></msub><mo>≥</mo><mi>τ</mi><mo>}</mo>
+  <mo>,</mo><mspace width="0.4em"/>
+  <mi>N</mi><mo>−</mo><mo>#</mo><mo>{</mo><mi>d</mi><mo>:</mo><msub><mover><mi>p</mi><mo>^</mo></mover><mrow><mi>c</mi><mi>d</mi></mrow></msub><mo>≥</mo><mi>τ</mi><mo>}</mo>
+  <mo>]</mo><mo>,</mo><mspace width="1em"/>
+  <mi>τ</mi><mo>=</mo><mn>1</mn><mo>−</mo><mfrac><mi>α</mi><mrow><mn>2</mn><mo>(</mo><mi>N</mi><mo>−</mo><mn>1</mn><mo>)</mo></mrow></mfrac>
+</mrow></math>
+</div>
+<p>where <math><msub><mover><mi>p</mi><mo>^</mo></mover><mrow><mi>d</mi><mi>c</mi></mrow></msub></math> is the share of replicates in which
+<math><mi>d</mi></math> scores better than <math><mi>c</mi></math>. The bound <math><mi>τ</mi></math> corrects for the
+<math><mi>N</mi><mo>−</mo><mn>1</mn></math> comparisons each checker takes part in, so the set covers the checker's true rank with probability
+<math><mi>γ</mi></math>. The rank shown is the left end of the set; checkers whose left ends meet share it.</p>
+<p>Rows are ordered by the estimate; where an estimate and a rank disagree, the rank says which gaps the data supports. Every random draw, of run order and
+of resampling, comes from one generator, SplitMix64, seeded by name, so the board re-scores to the same bytes on any machine.</p>
+
+<h2 id="reproduce">Reproduce it</h2>
+<p>Everything on the board comes from <a href="{{ quiet_root }}board.json">board.json</a> and the run records behind it. To score the records again:</p>
+<pre class="formula mono">python3 lka.py quiet-score --season scoring/{{ season.season }}.yaml --machine machines/{{ machine.name }}.yaml \
+    --manifest staged/manifest.json --results results --epoch {{ board.epoch }}</pre>
+<p>To check the measurement chain on any Linux machine with Docker: <span class="mono">quietbox/selftest-in-container.sh</span>.</p>
+
+<h2 id="disclosure">Disclosure</h2>
+<p>The board is run by Tristen Harr, whose checker logos-kernel is one of its entries. It is built from its Arena entry and measured exactly like every other;
+the rules of each season are committed before its first run, and every run record is published so that anyone can check that.</p>
+</div>
+{% endblock %}

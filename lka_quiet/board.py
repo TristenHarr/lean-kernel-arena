@@ -14,8 +14,10 @@ cap (PAR-2, as in the SAT Competition): the timeout for time, the memory limit f
 the power ceiling times the timeout for energy.
 
 Uncertainty comes from a stratified bootstrap that redraws every cell's runs and every family's
-tests, the same draws for every checker in a replicate. A checker is placed below another only
-when the other beats it in at least 97.5% of replicates; otherwise they share a rank.
+tests, the same draws for every checker in a replicate. Each checker's rank comes with its
+marginal confidence set (Mogstad, Romano, Shaikh & Wilhelm, 2024): one checker is placed below
+another only when the other beats it in nearly every replicate, at a level corrected for the
+number of comparisons; otherwise they share a rank.
 """
 
 import bisect
@@ -27,7 +29,7 @@ from .plan import Cell, consensus_status
 from .rng import SplitMix64, seed_from
 from .stats import quantile_nearest_rank
 
-BOARD_SCHEMA = "lka-quiet-board/1"
+BOARD_SCHEMA = "lka-quiet-board/2"
 
 QUANTITY_FIELDS = {"wall_s": "wall_s", "memory_bytes": "memory_peak_bytes", "energy_j": "energy_j"}
 
@@ -226,6 +228,23 @@ def _category_raw(logs: dict, category: dict, members: dict) -> float | None:
     return math.fsum(total)
 
 
+def rank_sets(probabilities: dict, contenders, confidence: float) -> dict:
+    """Each contender's marginal confidence set for its rank (Mogstad, Romano, Shaikh & Wilhelm,
+    Review of Economic Studies 2024): [1 + #{d surely better}, N - #{d surely worse}], where d is
+    surely better than c when d beats c in at least 1 - alpha / (2 (N - 1)) of the replicates, a
+    Bonferroni bound over the N - 1 comparisons involving c. Since no d is both surely better and
+    surely worse, the set is never empty, and the rank shown is its left end."""
+    contenders = list(contenders)
+    n = len(contenders)
+    threshold = 1 - (1 - confidence) / (2 * max(n - 1, 1)) - 1e-12
+    sets = {}
+    for c in contenders:
+        better = sum(1 for d in contenders if d != c and probabilities[d][c] >= threshold)
+        worse = sum(1 for d in contenders if d != c and probabilities[c][d] >= threshold)
+        sets[c] = (1 + better, n - worse)
+    return sets
+
+
 def _competition_ranks(scores: dict) -> dict:
     return {
         c: 1 + sum(1 for d, sd in scores.items() if d != c and sd < sc - _TIE_EPSILON)
@@ -330,15 +349,12 @@ def score_board(tests, checkers, records, scoring: dict) -> dict:
         contenders = [n for n in ranked if raw[cat_id][n] is not None]
         draws = replicates[cat_id]
         wins = {a: {b: 0.0 for b in contenders if b != a} for a in contenders}
-        rank_samples = {n: [] for n in contenders}
         factor_samples = {n: [] for n in names}
         for replicate in draws:
             if reference in replicate:
                 for n, score in replicate.items():
                     factor_samples[n].append(math.exp(-(score - replicate[reference])))
             scores = {n: replicate[n] for n in contenders}
-            for n, r in _competition_ranks(scores).items():
-                rank_samples[n].append(r)
             for a in contenders:
                 for b in contenders:
                     if a == b:
@@ -348,15 +364,12 @@ def score_board(tests, checkers, records, scoring: dict) -> dict:
                     elif abs(scores[a] - scores[b]) <= _TIE_EPSILON:
                         wins[a][b] += 0.5
         count = max(len(draws), 1)
-        probabilities = {a: {b: _round(w / count, 4) for b, w in row.items()} for a, row in wins.items()}
-        head_to_head[cat_id] = probabilities
-        display_rank = {
-            c: 1 + sum(1 for d in contenders if d != c and probabilities[d][c] >= upper_q)
-            for c in contenders
-        }
+        exact = {a: {b: w / count for b, w in row.items()} for a, row in wins.items()}
+        head_to_head[cat_id] = {a: {b: _round(p, 4) for b, p in row.items()} for a, row in exact.items()}
+        sets = rank_sets(exact, contenders, confidence)
         rank_counts: dict[int, int] = {}
-        for r in display_rank.values():
-            rank_counts[r] = rank_counts.get(r, 0) + 1
+        for lo, _ in sets.values():
+            rank_counts[lo] = rank_counts.get(lo, 0) + 1
         for name in names:
             score = raw[cat_id][name]
             relative = None if score is None or ref_raw is None else score - ref_raw
@@ -368,14 +381,9 @@ def score_board(tests, checkers, records, scoring: dict) -> dict:
                 "factor_hi": _round(quantile_nearest_rank(samples, upper_q), 6) if samples else None,
                 "rank": None, "rank_lo": None, "rank_hi": None, "tied": False,
             }
-            if name in display_rank:
-                samples = rank_samples[name]
-                result.update({
-                    "rank": display_rank[name],
-                    "rank_lo": quantile_nearest_rank(samples, (1 - confidence) / 2) if samples else display_rank[name],
-                    "rank_hi": quantile_nearest_rank(samples, upper_q) if samples else display_rank[name],
-                    "tied": rank_counts[display_rank[name]] > 1,
-                })
+            if name in sets:
+                lo, hi = sets[name]
+                result.update({"rank": lo, "rank_lo": lo, "rank_hi": hi, "tied": rank_counts[lo] > 1})
             entries[name]["categories"][cat_id] = result
 
     _pareto(entries, ranked, scoring.get("pareto", []))
@@ -519,15 +527,18 @@ def _sensitivity(entries, ranked, names, point_logs, categories, members, config
                 variants.append({**base, axis: {k: v / total for k, v in weights.items()}})
     best = {n: math.inf for n in ranked}
     worst = {n: 0 for n in ranked}
-    for variant in variants:
+    at = {}
+    for index, variant in enumerate(variants):
         scores = {n: _category_raw(point_logs[n], variant, members) for n in ranked}
         scores = {n: s for n, s in scores.items() if s is not None}
         for n, r in _competition_ranks(scores).items():
             best[n] = min(best[n], r)
             worst[n] = max(worst[n], r)
+            if index == 0:
+                at[n] = r
     for n in ranked:
         if best[n] != math.inf:
-            entries[n]["sensitivity"] = {"best": best[n], "worst": worst[n]}
+            entries[n]["sensitivity"] = {"at": at[n], "best": best[n], "worst": worst[n]}
 
 
 def _scaling(entries, names, summaries, config, categories, members):

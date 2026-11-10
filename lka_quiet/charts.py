@@ -68,6 +68,47 @@ def _tick_label(t) -> str:
     return f"{t:g}×"
 
 
+def label_width(text: str, size: float = 12.0) -> float:
+    """A generous estimate of a label's rendered width in the system sans at `size` px."""
+    return len(text) * size * 0.6 + 2
+
+
+def _overlaps(a, b) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+# Where a direct label may go relative to its point: (dx, dy, anchor), in order of preference.
+_LABEL_SLOTS = ((9, 4, "start"), (-9, 4, "end"), (9, -12, "start"), (9, 20, "start"), (-9, -12, "end"),
+                (-9, 20, "end"), (9, -28, "start"), (9, 36, "start"), (-9, -28, "end"), (-9, 36, "end"))
+
+
+def _place_labels(items, width: float, height: float):
+    """Greedy collision-free placement: items are (name, px, py); returns (name, px, py, x, y, anchor)."""
+    obstacles = [(px - 7, py - 7, px + 7, py + 7) for _, px, py in items]
+    placed = []
+    out = []
+    for name, px, py in items:
+        w = label_width(name)
+        choice = None
+        for dx, dy, anchor in _LABEL_SLOTS:
+            x0 = px + dx if anchor == "start" else px + dx - w
+            box = (x0, py + dy - 11, x0 + w, py + dy + 3)
+            inside = box[0] >= 0 and box[2] <= width and box[1] >= 0 and box[3] <= height
+            own = (px - 7, py - 7, px + 7, py + 7)
+            if inside and not any(_overlaps(box, b) for b in placed) and \
+                    not any(_overlaps(box, b) for b in obstacles if b != own):
+                choice = (dx, dy, anchor, box)
+                break
+        if choice is None:
+            dx, dy, anchor = _LABEL_SLOTS[0]
+            x0 = px + dx
+            choice = (dx, dy, anchor, (x0, py + dy - 11, x0 + w, py + dy + 3))
+        dx, dy, anchor, box = choice
+        placed.append(box)
+        out.append((name, px, py, px + dx, py + dy, anchor))
+    return out
+
+
 def seq_step(p: float):
     """0..6 on the seven-step sequential ramp, for a value in [0, 1]."""
     if p is None or not math.isfinite(p):
@@ -87,7 +128,7 @@ class _Log:
 def _open(kind: str, title: str, subtitle: str, width: float, height: float) -> list[str]:
     uid = _uid(kind, title, subtitle)
     return [
-        f'<svg xmlns="{_SVG}" viewBox="0 0 {_n(width)} {_n(height)}" width="100%" role="img" '
+        f'<svg xmlns="{_SVG}" viewBox="0 0 {_n(width)} {_n(height)}" width="{_n(width)}" height="{_n(height)}" role="img" '
         f'aria-labelledby="{uid}-t {uid}-d" class="chart chart-{kind}">',
         f'<title id="{uid}-t">{_esc(title)}</title>',
         f'<desc id="{uid}-d">{_esc(subtitle)}</desc>',
@@ -114,7 +155,7 @@ def _rounded_bar(x0: float, x1: float, y: float, h: float, r: float = 4.0) -> st
 # Forest plot: one row per checker, its estimate and 95% interval on a log axis around the reference
 
 
-def forest(rows, *, title: str, subtitle: str = "", value_header: str = "× better than official [95% CI]",
+def forest(rows, *, title: str, subtitle: str = "", value_header: str = "× official [95% CI]",
            reference_label: str = "official") -> str:
     width, row_h, top, bottom = 780, 26, 34, 40
     rank_w, name_w, num_w = 40, 190, 200
@@ -229,6 +270,9 @@ def pareto(points, *, title: str, x_label: str, y_label: str, subtitle: str = ""
                 coords.append(f"{_n(x(front[k - 1]['x']))},{_n(y(p['y']))}")
             coords.append(f"{_n(x(p['x']))},{_n(y(p['y']))}")
         out.append(f'<polyline class="front s1" points="{" ".join(coords)}"/>')
+    labelled = sorted((p for p in points if p["pareto"]), key=lambda p: (y(p["y"]), x(p["x"])))
+    placement = {name: (lx, ly, anchor, px, py) for name, px, py, lx, ly, anchor in
+                 _place_labels([(p["name"], x(p["x"]), y(p["y"])) for p in labelled], width, height)}
     for p in sorted(points, key=lambda p: p["pareto"]):
         cls = "s1" if p["pareto"] else "muted"
         px, py = x(p["x"]), y(p["y"])
@@ -238,7 +282,12 @@ def pareto(points, *, title: str, x_label: str, y_label: str, subtitle: str = ""
                    f'<circle class="hit" cx="{_n(px)}" cy="{_n(py)}" r="12"/>'
                    f'<circle class="pt {cls}" cx="{_n(px)}" cy="{_n(py)}" r="4.5"/>')
         if p["pareto"]:
-            out.append(f'<text class="direct-label" x="{_n(px + 9)}" y="{_n(py + 4)}">{_esc(p["name"])}</text>')
+            lx, ly, anchor, _, _ = placement[p["name"]]
+            if ly != py + 4:
+                edge = lx - 2 if anchor == "start" else lx + 2
+                out.append(f'<line class="leader" x1="{_n(px)}" y1="{_n(py)}" x2="{_n(edge)}" y2="{_n(ly - 4)}"/>')
+            anchor_attr = ' text-anchor="end"' if anchor == "end" else ""
+            out.append(f'<text class="direct-label" x="{_n(lx)}" y="{_n(ly)}"{anchor_attr}>{_esc(p["name"])}</text>')
         out.append("</g>")
     out.append("</svg>")
     return "".join(out)

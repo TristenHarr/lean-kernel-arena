@@ -1,0 +1,178 @@
+{% extends "quiet/base.html" %}
+{% block title %}Board{% endblock %}
+{% block content %}
+<h1>Which Lean kernel checker is best, measured properly</h1>
+<p class="lede">Every Arena checker on one dedicated, silent machine: wall time on one core and on four, peak memory and energy,
+each the median of repeated runs that prove their own conditions, on real libraries, stress tests and small files.
+Ranks carry 95% intervals; checkers the data cannot separate share a rank.</p>
+
+<dl class="strip">
+    <div><dt>Season</dt><dd class="v">{{ board.season }}</dd></div>
+    <div><dt>Measured on</dt><dd class="v">{{ board.machine.cpu or board.machine.name }}</dd></div>
+    <div><dt>Reference</dt><dd class="v">{{ board.reference }} = 1×</dd></div>
+    <div><dt>Measured</dt><dd class="v num">{{ board.progress.measured }} / {{ board.progress.needed }} cells
+        <div class="meter" role="img" aria-label="{{ '%.0f' % progress_pct }}% measured"><span style="width: {{ '%.1f' % progress_pct }}%"></span></div></dd></div>
+    <div><dt>Bootstrap</dt><dd class="v num">{{ board.bootstrap.replicates }} replicates, {{ (board.bootstrap.confidence * 100) | int }}%</dd></div>
+</dl>
+
+<section aria-labelledby="leaders">
+    <h2 id="leaders">Leaders</h2>
+    <p class="section-note">The best checker in each category, as a factor over Lean's own kernel, with its 95% interval. Each tile opens the category's full ranking.</p>
+    <div class="tiles">
+        {% for tile in tiles %}
+        <a class="tile{% if tile.category.id == 'overall' %} overall{% endif %}" href="category/{{ tile.category.id }}/">
+            <span class="label">{{ tile.category.title }}</span>
+            {% if tile.leaders.names %}
+            <span class="who" title="{{ tile.leaders.names | join(', ') }}">{{ tile.leaders.label }}</span>
+            <span class="value">{{ tile.leaders.factor | factor }}</span>
+            <span class="ci">[{{ '%.3g' % tile.leaders.lo }}, {{ '%.3g' % tile.leaders.hi }}] · {{ tile.leaders.ranked }} ranked</span>
+            {% else %}
+            <span class="who muted">Not measured yet</span>
+            {% endif %}
+        </a>
+        {% endfor %}
+    </div>
+</section>
+
+<section aria-labelledby="overall">
+    <h2 id="overall">Overall</h2>
+    <p class="section-note">One number per checker: the weighted geometric mean of its time on four cores and on one, its peak memory and its energy,
+    against Lean's kernel, over whole libraries, stress tests and small files. A dot is the estimate, the bar its 95% interval.
+    A rank is taken only from checkers that are better in nearly every redraw of the data; "=" marks a rank shared with checkers the data cannot separate.
+    <a href="methodology/#uncertainty">How it is computed</a>.</p>
+    <figure class="chart-card">
+        <div class="scroll-x">{{ overall_svg }}</div>
+        <figcaption>Ranked checkers only: sound, and never rejecting a valid proof. Reference line: {{ board.reference }}.</figcaption>
+        <details class="twin"><summary>Table</summary>
+            <table class="data">
+                <thead><tr><th>Rank</th><th>Checker</th><th class="n">Factor</th><th class="n">95% interval</th><th class="n">Places it can hold (95%)</th></tr></thead>
+                <tbody>
+                {% for row in overall_rows %}
+                {% set result = board.checkers | selectattr('name', 'equalto', row.name) | first %}
+                <tr><td class="n">{{ row.rank }}</td><td><a href="checker/{{ row.name }}/">{{ row.name }}</a></td>
+                    <td class="n">{{ row.factor | factor }}</td><td class="n">[{{ '%.3g' % row.lo }}, {{ '%.3g' % row.hi }}]</td>
+                    <td class="n">{{ result.categories.overall.rank_lo }}–{{ result.categories.overall.rank_hi }}</td></tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </details>
+    </figure>
+    {% if overall_unranked %}
+    <h3>Not ranked</h3>
+    <div class="table-card">
+        <table class="data">
+            <thead><tr><th>Checker</th><th>Why</th><th class="n">Factor (shown, not ranked)</th></tr></thead>
+            <tbody>
+            {% for row in overall_unranked %}
+            <tr><td><a href="checker/{{ row.name }}/">{{ row.name }}</a></td>
+                <td>{% if 'invalid' in row.why %}<span class="badge critical">{{ row.why }}</span>{% elif 'valid proof' in row.why %}<span class="badge serious">{{ row.why }}</span>{% else %}{{ row.why }}{% endif %}</td>
+                <td class="n">{{ row.interval }}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</section>
+
+<section aria-labelledby="checkers">
+    <h2 id="checkers">Every category at once</h2>
+    <p class="section-note">Each checker's rank in each category; darker is better. Hover a rank for its interval. Columns open the categories, rows the checkers.</p>
+    <div class="table-card">
+        <table class="data ranks">
+            <thead><tr><th>Checker</th>
+            {% for category in grid.categories %}<th class="n"><a href="category/{{ category.id }}/">{{ category.title }}</a></th>{% endfor %}</tr></thead>
+            <tbody>
+            {% for row in grid.rows %}
+            <tr><td><a href="checker/{{ row.name }}/">{{ row.name }}</a></td>
+                {% for cell in row.cells %}<td class="q{% if cell.q is not none %} q{{ cell.q }}{% endif %}"{% if cell.title %} title="{{ cell.title }}"{% endif %}>{{ cell.text }}</td>{% endfor %}</tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section aria-labelledby="correctness">
+    <h2 id="correctness">Correctness</h2>
+    <p class="section-note">Soundness comes first, as on the Arena: a checker that accepts one invalid proof, in any run on either lane, is not ranked;
+    nor is one that rejects a valid proof. A crash is never a rejection: a process that dies of a signal or of memory makes the run an error,
+    whatever exit code a wrapper turns it into. Counts are from the 4-core lane.</p>
+    <div class="table-card">
+        <table class="data">
+            <thead><tr><th>Checker</th><th class="n">Valid proofs accepted</th><th class="n">Invalid proofs rejected</th>
+                <th class="n">Corner cases answered</th><th class="n">Declined or failed</th><th>Notes</th></tr></thead>
+            <tbody>
+            {% for entry in board.checkers | sort(attribute='name') %}
+            {% set c = entry.correctness %}
+            <tr><td><a href="checker/{{ entry.name }}/">{{ entry.name }}</a></td>
+                <td class="n">{{ c.good_accepted }} / {{ c.good_total }}</td>
+                <td class="n">{{ c.bad_rejected }} / {{ c.bad_total }}</td>
+                <td class="n">{{ c.either_answered }} / {{ c.either_total }}</td>
+                <td class="n">{{ c.declined_or_failed }}</td>
+                <td>{% if entry.gates.unsound %}<span class="badge critical" title="{{ entry.gates.unsound | join(', ') }}">accepts {{ entry.gates.unsound | length }} invalid</span>{% endif %}
+                    {% if entry.gates.wrong_rejects %}<span class="badge serious" title="{{ entry.gates.wrong_rejects | join(', ') }}">rejects {{ entry.gates.wrong_rejects | length }} valid</span>{% endif %}
+                    {% if entry.flaky %}<span class="badge warning">verdict varies: {{ entry.flaky | length }}</span>{% endif %}
+                    {% if entry.pareto %}<span class="badge accent">Pareto-optimal</span>{% endif %}</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section aria-labelledby="tradeoffs">
+    <h2 id="tradeoffs">Trade-offs</h2>
+    <p class="section-note">A checker can be the fastest, or the leanest, or both. Up and to the right is better on both; a checker no other one beats on both is labelled.
+    The Pareto badge in the correctness table looks at all four metrics at once.</p>
+    <figure class="chart-card">
+        <div class="scroll-x">{{ pareto_svg }}</div>
+        <details class="twin"><summary>Table</summary>
+            <table class="data">
+                <thead><tr><th>Checker</th><th class="n">Speed, 4 cores</th><th class="n">Memory</th><th>Front</th></tr></thead>
+                <tbody>{% for p in pareto_points | sort(attribute='x', reverse=True) %}
+                <tr><td>{{ p.name }}</td><td class="n">{{ p.x | factor }}</td><td class="n">{{ p.y | factor }}</td><td>{% if p.pareto %}yes{% endif %}</td></tr>
+                {% endfor %}</tbody>
+            </table>
+        </details>
+    </figure>
+</section>
+
+<section aria-labelledby="h2h">
+    <h2 id="h2h">Head to head</h2>
+    <p class="section-note">The probability that the row checker's overall score beats the column checker's, over {{ board.bootstrap.replicates }} bootstrap replicates
+    that redraw every cell's runs and every family's tests. A rank is only taken by a win in at least 97.5% of them.</p>
+    <figure class="chart-card">
+        <div class="scroll-x">{{ h2h_svg }}</div>
+        <details class="twin"><summary>Table</summary>
+            <div class="scroll-x"><table class="data">
+                <thead><tr><th></th>{% for col in h2h_names %}<th class="n">{{ col }}</th>{% endfor %}</tr></thead>
+                <tbody>{% for row in h2h_names %}<tr><th>{{ row }}</th>
+                    {% for col in h2h_names %}<td class="n">{% if row != col %}{{ '%.3f' % h2h[row][col] }}{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody>
+            </table></div>
+        </details>
+    </figure>
+</section>
+
+<section aria-labelledby="scaling">
+    <h2 id="scaling">Parallelism</h2>
+    <p class="section-note">How much faster each checker gets with four cores instead of one. Four is the ideal on this machine.</p>
+    <figure class="chart-card">
+        <div class="scroll-x">{{ scaling_svg }}</div>
+        <details class="twin"><summary>Table</summary>
+            <table class="data"><thead><tr><th>Checker</th><th class="n">Speed-up</th></tr></thead>
+                <tbody>{% for name, value in scaling %}<tr><td>{{ name }}</td><td class="n">{{ '%.2f' % value }}×</td></tr>{% endfor %}</tbody></table>
+        </details>
+    </figure>
+</section>
+
+<section aria-labelledby="sensitivity">
+    <h2 id="sensitivity">Does the ranking hang on the weights?</h2>
+    <p class="section-note">Each checker's place by its estimate under this season's weights (the dot), and the best and worst place it reaches when any one metric
+    weight or family weight is halved or raised by half (the bar). A short bar is a place the rules cannot argue with.</p>
+    <figure class="chart-card">
+        <div class="scroll-x">{{ sensitivity_svg }}</div>
+        <details class="twin"><summary>Table</summary>
+            <table class="data"><thead><tr><th>Checker</th><th class="n">Place</th><th class="n">Best</th><th class="n">Worst</th></tr></thead>
+                <tbody>{% for name, rank, best, worst in sensitivity %}<tr><td>{{ name }}</td><td class="n">{{ rank }}</td><td class="n">{{ best }}</td><td class="n">{{ worst }}</td></tr>{% endfor %}</tbody></table>
+        </details>
+    </figure>
+</section>
+{% endblock %}

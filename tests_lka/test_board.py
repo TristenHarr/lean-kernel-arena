@@ -5,7 +5,7 @@ import json
 import math
 import unittest
 
-from lka_quiet.board import BoardError, family_members, score_board, summarize_cells
+from lka_quiet.board import BoardError, family_members, rank_sets, score_board, summarize_cells
 from lka_quiet.plan import Cell
 
 TESTS = [
@@ -342,6 +342,37 @@ class FactorIntervals(unittest.TestCase):
         self.assertEqual((overall["factor_lo"], overall["factor_hi"]), (1.0, 1.0))
 
 
+class RankSets(unittest.TestCase):
+    """Marginal confidence sets for ranks (Mogstad, Romano, Shaikh & Wilhelm, REStud 2024):
+    rank(c) in [1 + #{d surely better}, N - #{d surely worse}], each pairwise decision taken at
+    level 1 - alpha / (2 (N - 1)) so the set covers c's rank with probability 1 - alpha."""
+
+    def test_threshold_is_bonferroni_over_the_comparisons_involving_one_checker(self):
+        # three contenders: 1 - 0.05 / 4 = 0.9875; a beats b with 0.98, below it
+        p = {"a": {"b": 0.98, "c": 1.0}, "b": {"a": 0.02, "c": 1.0}, "c": {"a": 0.0, "b": 0.0}}
+        sets = rank_sets(p, ["a", "b", "c"], confidence=0.95)
+        self.assertEqual(sets["a"], (1, 2))
+        self.assertEqual(sets["b"], (1, 2))
+        self.assertEqual(sets["c"], (3, 3))
+
+    def test_a_certain_order_is_a_set_of_points(self):
+        p = {"a": {"b": 1.0, "c": 1.0}, "b": {"a": 0.0, "c": 1.0}, "c": {"a": 0.0, "b": 0.0}}
+        self.assertEqual(rank_sets(p, ["a", "b", "c"], confidence=0.95), {"a": (1, 1), "b": (2, 2), "c": (3, 3)})
+
+    def test_nothing_known_is_every_rank(self):
+        p = {x: {y: 0.5 for y in "abcd" if y != x} for x in "abcd"}
+        self.assertEqual(rank_sets(p, list("abcd"), confidence=0.95), {x: (1, 4) for x in "abcd"})
+
+    def test_board_ranks_lie_in_their_sets(self):
+        board = board_for(checker_runs("official"), checker_runs("a", scale=0.3), checker_runs("b", scale=0.5, mem_scale=0.4),
+                          checker_runs("c", scale=0.9, energy_scale=0.3), checker_runs("d", scale=0.45))
+        for name in "abcd":
+            for category in board["categories"]:
+                r = entry(board, name)["categories"][category["id"]]
+                self.assertEqual(r["rank"], r["rank_lo"], (name, category["id"]))
+                self.assertLessEqual(r["rank_lo"], r["rank_hi"], (name, category["id"]))
+
+
 class Pareto(unittest.TestCase):
     def test_a_memory_specialist_is_pareto_optimal(self):
         board = board_for(checker_runs("official"), checker_runs("fast", scale=0.2, mem_scale=2.0),
@@ -374,7 +405,16 @@ class Sensitivity(unittest.TestCase):
     def test_a_dominant_checker_is_first_under_every_weighting(self):
         board = board_for(checker_runs("official"), checker_runs("a", scale=0.1, mem_scale=0.1, energy_scale=0.1),
                           checker_runs("b", scale=0.5))
-        self.assertEqual(entry(board, "a")["sensitivity"], {"best": 1, "worst": 1})
+        self.assertEqual(entry(board, "a")["sensitivity"], {"at": 1, "best": 1, "worst": 1})
+
+    def test_the_seasons_own_weighting_lies_inside_the_range(self):
+        board = board_for(checker_runs("official"), checker_runs("fast", scale=0.2, mem_scale=1.6, energy_scale=0.3),
+                          checker_runs("lean", scale=0.45, mem_scale=0.2, energy_scale=0.5),
+                          checker_runs("mid", scale=0.4, mem_scale=0.6, energy_scale=0.6))
+        for name in ("fast", "lean", "mid"):
+            s = entry(board, name)["sensitivity"]
+            self.assertLessEqual(s["best"], s["at"])
+            self.assertLessEqual(s["at"], s["worst"])
 
     def test_a_specialist_moves_with_the_weights(self):
         board = board_for(checker_runs("official"), checker_runs("fast", scale=0.2, mem_scale=1.6, energy_scale=0.3),

@@ -1,0 +1,248 @@
+/* The quiet board's pages. Colours are roles, defined once per theme; the charts' SVG carries
+   classes only, so light and dark are one switch. Palette: the validated reference instance
+   (three family slots, the blue sequential ramp, status colours with icon and label). */
+
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --surface-2: #f3f2ef;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --hairline: rgba(11, 11, 11, 0.10);
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+  --de-emphasis: #c3c2b7;
+  --q0: #cde2fb; --q1: #9ec5f4; --q2: #6da7ec; --q3: #3987e5; --q4: #256abf; --q5: #184f95; --q6: #0d366b;
+  --q-ink-light: #0b0b0b; --q-ink-dark: #ffffff;
+  --good: #0ca30c; --good-text: #006300;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+  --link: #1c5cab;
+  --focus: #2a78d6;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", "JuliaMono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #222221;
+    --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781; --grid: #2c2c2a; --axis: #383835;
+    --hairline: rgba(255, 255, 255, 0.10);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --de-emphasis: #4a4a47;
+    --q0: #0d366b; --q1: #184f95; --q2: #256abf; --q3: #3987e5; --q4: #6da7ec; --q5: #9ec5f4; --q6: #cde2fb;
+    --good-text: #0ca30c; --link: #86b6ef; --focus: #3987e5;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --surface-2: #222221;
+  --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781; --grid: #2c2c2a; --axis: #383835;
+  --hairline: rgba(255, 255, 255, 0.10);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --de-emphasis: #4a4a47;
+  --q0: #0d366b; --q1: #184f95; --q2: #256abf; --q3: #3987e5; --q4: #6da7ec; --q5: #9ec5f4; --q6: #cde2fb;
+  --good-text: #0ca30c; --link: #86b6ef; --focus: #3987e5;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font: 15px/1.55 var(--font);
+  font-feature-settings: "kern";
+}
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 3px; }
+
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+
+/* Header and navigation */
+.top {
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+  position: sticky; top: 0; z-index: 10;
+}
+.top .wrap { display: flex; align-items: center; gap: 24px; min-height: 56px; flex-wrap: wrap; }
+.brand { font-weight: 650; letter-spacing: -0.01em; color: var(--ink); white-space: nowrap; }
+.brand small { font-weight: 500; color: var(--muted); margin-left: 6px; }
+.nav { display: flex; gap: 18px; flex-wrap: wrap; font-size: 14px; }
+.nav a { color: var(--ink-2); }
+.nav a[aria-current="page"] { color: var(--ink); font-weight: 600; }
+.theme-toggle {
+  margin-left: auto; background: none; border: 1px solid var(--hairline); color: var(--ink-2);
+  border-radius: 6px; padding: 4px 10px; font: inherit; font-size: 13px; cursor: pointer;
+}
+
+/* Page sections */
+main { padding: 32px 0 64px; }
+h1 { font-size: 30px; line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 10px; font-weight: 680; }
+h2 { font-size: 21px; letter-spacing: -0.01em; margin: 48px 0 6px; font-weight: 640; }
+h3 { font-size: 16px; margin: 28px 0 6px; font-weight: 620; }
+.lede { font-size: 17px; color: var(--ink-2); max-width: 760px; margin: 0 0 20px; }
+.section-note { color: var(--ink-2); max-width: 780px; margin: 0 0 16px; }
+.muted { color: var(--muted); }
+.mono { font-family: var(--mono); font-size: 0.92em; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* Status strip under the title */
+.strip {
+  display: flex; flex-wrap: wrap; gap: 8px 24px; padding: 12px 16px; margin: 0 0 28px;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px; font-size: 13px;
+}
+.strip div { display: flex; flex-direction: column; }
+.strip dt, .strip .k { color: var(--muted); font-size: 12px; }
+.strip .v { color: var(--ink); font-weight: 560; }
+.meter { width: 160px; height: 6px; border-radius: 3px; background: var(--q0); margin-top: 6px; overflow: hidden; }
+.meter span { display: block; height: 100%; background: var(--q4); border-radius: 3px; }
+
+/* Notices: a status colour always comes with an icon and a label */
+.notice {
+  display: grid; grid-template-columns: 22px 1fr; gap: 10px; align-items: start;
+  border: 1px solid var(--hairline); border-left: 4px solid var(--warning); background: var(--surface);
+  border-radius: 8px; padding: 12px 16px; margin: 0 0 24px; color: var(--ink);
+}
+.notice .icon { font-size: 16px; line-height: 1.4; }
+.notice strong { font-weight: 640; }
+
+/* Category tiles */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin: 0 0 8px; }
+.tile {
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px; padding: 14px 16px;
+  color: var(--ink); display: flex; flex-direction: column; gap: 2px; min-height: 128px;
+}
+.tile:hover { text-decoration: none; border-color: var(--axis); }
+.tile .label { font-size: 13px; color: var(--ink-2); font-weight: 560; }
+.tile .who { font-size: 15px; font-weight: 620; margin-top: 4px; }
+.tile .value { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; }
+.tile .ci { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tile.overall { grid-column: span 2; }
+.tile.overall .value { font-size: 40px; }
+@media (max-width: 560px) { .tile.overall { grid-column: span 1; } }
+
+/* Figures and their table twins */
+figure.chart-card {
+  margin: 12px 0 8px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 12px;
+  padding: 16px 16px 8px;
+}
+figure.chart-card figcaption { font-size: 13px; color: var(--ink-2); margin: 8px 0 4px; max-width: 760px; }
+.scroll-x { overflow-x: auto; }
+details.twin { margin: 6px 0 4px; }
+details.twin summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
+
+/* Tables */
+table.data { border-collapse: collapse; width: 100%; font-size: 13.5px; margin: 8px 0; }
+table.data th, table.data td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+table.data th { color: var(--ink-2); font-weight: 600; font-size: 12.5px; background: var(--surface); }
+table.data td.n, table.data th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.data tr:hover td { background: var(--surface-2); }
+.table-card { background: var(--surface); border: 1px solid var(--hairline); border-radius: 12px; padding: 4px 8px; overflow-x: auto; }
+
+/* Badges: icon + label, never colour alone */
+.badge {
+  display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px;
+  font-size: 12px; border: 1px solid var(--hairline); color: var(--ink-2); white-space: nowrap;
+}
+.badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.badge.good::before { background: var(--good); }
+.badge.critical::before { background: var(--critical); }
+.badge.serious::before { background: var(--serious); }
+.badge.warning::before { background: var(--warning); }
+.badge.accent::before { background: var(--s1); }
+
+/* Rank grid: categories x checkers, the rank on the sequential ramp */
+table.ranks td.q { text-align: center; font-variant-numeric: tabular-nums; font-weight: 560; min-width: 44px; }
+table.ranks td.q0, table.ranks td.q1, table.ranks td.q2 { color: var(--q-ink-light); }
+table.ranks td.q3, table.ranks td.q4, table.ranks td.q5, table.ranks td.q6 { color: var(--q-ink-dark); }
+:root[data-theme="dark"] table.ranks td.q0, :root[data-theme="dark"] table.ranks td.q1, :root[data-theme="dark"] table.ranks td.q2 { color: var(--q-ink-dark); }
+:root[data-theme="dark"] table.ranks td.q4, :root[data-theme="dark"] table.ranks td.q5, :root[data-theme="dark"] table.ranks td.q6 { color: var(--q-ink-light); }
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) table.ranks td.q0,
+  :root:where(:not([data-theme="light"])) table.ranks td.q1,
+  :root:where(:not([data-theme="light"])) table.ranks td.q2 { color: var(--q-ink-dark); }
+  :root:where(:not([data-theme="light"])) table.ranks td.q4,
+  :root:where(:not([data-theme="light"])) table.ranks td.q5,
+  :root:where(:not([data-theme="light"])) table.ranks td.q6 { color: var(--q-ink-light); }
+}
+td.q0 { background: var(--q0); } td.q1 { background: var(--q1); } td.q2 { background: var(--q2); }
+td.q3 { background: var(--q3); } td.q4 { background: var(--q4); } td.q5 { background: var(--q5); } td.q6 { background: var(--q6); }
+
+/* Two-column prose with formulas */
+.prose { max-width: 780px; }
+.prose p { margin: 0 0 14px; }
+.prose ul { padding-left: 20px; }
+.prose li { margin: 4px 0; }
+math[display="block"] { margin: 14px 0; font-size: 1.12em; overflow-x: auto; overflow-y: hidden; }
+.formula { background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px; padding: 8px 16px; margin: 12px 0 18px; overflow-x: auto; }
+dl.defs { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; }
+dl.defs dt { font-weight: 600; }
+dl.defs dd { margin: 0; color: var(--ink-2); }
+
+footer.foot { border-top: 1px solid var(--hairline); padding: 24px 0 48px; color: var(--ink-2); font-size: 13px; }
+footer.foot p { margin: 4px 0; max-width: 820px; }
+
+/* --- Charts --------------------------------------------------------------------------- */
+svg.chart { display: block; max-width: 100%; height: auto; font-family: var(--font); }
+svg.chart text { fill: var(--ink-2); font-size: 12px; }
+svg.chart .head { fill: var(--muted); font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; }
+svg.chart .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+svg.chart .name { fill: var(--ink); font-size: 12.5px; }
+svg.chart a .name { fill: var(--link); }
+svg.chart .rank { fill: var(--ink-2); font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 600; }
+svg.chart .num { fill: var(--ink); font-size: 12px; font-variant-numeric: tabular-nums; }
+svg.chart .row-label, svg.chart .col-label { fill: var(--ink-2); font-size: 11.5px; }
+svg.chart .axis-label, svg.chart .legend-caption { fill: var(--ink-2); font-size: 12px; }
+svg.chart .direct-label { fill: var(--ink); font-size: 12px; font-weight: 560;
+  paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; }
+svg.chart .reference-label { fill: var(--ink-2); font-size: 11px; font-weight: 600; }
+svg.chart .empty { fill: var(--muted); font-size: 14px; }
+svg.chart .grid { stroke: var(--grid); stroke-width: 1; }
+svg.chart .axis { stroke: var(--axis); stroke-width: 1; }
+svg.chart .reference { stroke: var(--axis); stroke-width: 1.5; }
+svg.chart .leader { stroke: var(--muted); stroke-width: 1; }
+svg.chart .hit { fill: transparent; }
+svg.chart .ci { stroke-width: 2; stroke-linecap: round; }
+svg.chart .ci.s1 { stroke: var(--s1); }
+svg.chart .pt, svg.chart .dot { stroke: var(--surface); stroke-width: 2; }
+svg.chart .s1 { fill: var(--s1); }
+svg.chart .s2 { fill: var(--s2); }
+svg.chart .s3 { fill: var(--s3); }
+svg.chart .muted { fill: var(--de-emphasis); }
+svg.chart .cross { stroke-width: 2; stroke-linecap: round; fill: none; }
+svg.chart .cross.s1 { stroke: var(--s1); } svg.chart .cross.s2 { stroke: var(--s2); } svg.chart .cross.s3 { stroke: var(--s3); }
+svg.chart polyline.front { fill: none; stroke: var(--s1); stroke-width: 2; stroke-linejoin: round; opacity: 0.55; }
+svg.chart .bar { stroke: none; }
+svg.chart rect.cell, svg.chart rect.swatch { stroke: none; }
+svg.chart rect.diag { fill: var(--surface-2); }
+svg.chart .q0 { fill: var(--q0); } svg.chart .q1 { fill: var(--q1); } svg.chart .q2 { fill: var(--q2); }
+svg.chart .q3 { fill: var(--q3); } svg.chart .q4 { fill: var(--q4); } svg.chart .q5 { fill: var(--q5); } svg.chart .q6 { fill: var(--q6); }
+svg.chart g.row:hover .hit, svg.chart g.row:focus .hit { fill: var(--surface-2); }
+svg.chart g.row:focus, svg.chart g.point:focus, svg.chart g.test:focus, svg.chart rect.cell:focus { outline: none; }
+svg.chart g.point:hover .pt, svg.chart g.point:focus .pt,
+svg.chart g.test:hover .dot, svg.chart g.test:focus .dot { stroke: var(--ink); }
+svg.chart rect.cell:hover, svg.chart rect.cell:focus { stroke: var(--ink); stroke-width: 1.5; }
+
+/* The tooltip: the value leads, the label follows */
+.tip {
+  position: fixed; z-index: 50; pointer-events: none; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--hairline); border-radius: 8px; padding: 6px 10px; font-size: 12.5px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12); max-width: 320px;
+}
+.tip b { display: block; font-size: 14px; font-variant-numeric: tabular-nums; }
+.tip span { color: var(--ink-2); }
+
+@media print {
+  .top, .theme-toggle, details.twin summary { display: none; }
+  details.twin { display: block; }
+}
+@media (forced-colors: active) {
+  svg.chart .pt, svg.chart .dot, svg.chart .bar, svg.chart rect.cell { forced-color-adjust: none; }
+}
