@@ -1,0 +1,4 @@
+{"counter-value" : "2987.654320", "unit" : "msec", "event" : "task-clock", "event-runtime" : 2987654320, "pcnt-running" : 100.00, "metric-value" : "0.995466", "metric-unit" : "CPUs utilized"}
+{"counter-value" : "9100000000.000000", "unit" : "", "event" : "instructions:u", "event-runtime" : 1493827160, "pcnt-running" : 50.00, "metric-value" : "1.081481", "metric-unit" : "insn per cycle"}
+{"counter-value" : "8414000000.000000", "unit" : "", "event" : "cycles:u", "event-runtime" : 2987654320, "pcnt-running" : 100.00, "metric-value" : "2.816296", "metric-unit" : "GHz"}
+{"counter-value" : "<not supported>", "unit" : "", "event" : "cycles:k", "event-runtime" : 0, "pcnt-running" : 100.00, "metric-value" : "0.000000", "metric-unit" : ""}

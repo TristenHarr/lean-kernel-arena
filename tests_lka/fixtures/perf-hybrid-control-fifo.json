@@ -1,0 +1,4 @@
+{"counter-value" : "540910318.000000", "unit" : "ns", "event" : "duration_time", "event-runtime" : 540910318, "pcnt-running" : 100.00, "metric-value" : "26.020607", "metric-unit" : "G/sec"}
+{"counter-value" : "20.787767", "unit" : "msec", "event" : "task-clock", "event-runtime" : 20787767, "pcnt-running" : 100.00, "metric-value" : "0.038431", "metric-unit" : "CPUs utilized"}
+{"counter-value" : "<not counted>", "unit" : "", "event" : "cpu_atom/instructions:u/", "event-runtime" : 0, "pcnt-running" : 0.00, "metric-value" : "0.000000", "metric-unit" : ""}
+{"counter-value" : "241028698.000000", "unit" : "", "event" : "cpu_core/instructions:u/", "event-runtime" : 20787767, "pcnt-running" : 100.00, "metric-value" : "0.000000", "metric-unit" : "insn per cycle"}
