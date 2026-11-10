@@ -8,7 +8,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lka_quiet.cli import StageError, built_checkers, run_env, score_store, stage_tests
+from lka_quiet.cli import StageError, built_checkers, encode_round, run_env, score_store, stage_tests
+from lka_quiet.encode import fingerprint
 from lka_quiet.session import RunStore
 
 
@@ -127,6 +128,98 @@ class Staging(unittest.TestCase):
                 stage_tests(src / "results.json", tarball=src / "lean-arena-tests.tar.gz", sources=[exports(tmp)],
                             store=tmp / "store", allow_mismatch=set())
             self.assertFalse((tmp / "evil.ndjson").exists())
+
+
+EXPORTS = Path(__file__).parent / "fixtures" / "exports"
+ROUND_TESTS = {"subject-reduction-redex": "accept", "init-prefix": "accept", "proj-maybe-prop": "accept",
+               "let-value-type-mismatch": "either", "proof-param-swap": "either"}
+
+
+def staged_round(tmp: Path) -> dict:
+    """A manifest staging real exports of the Arena's tests."""
+    import gzip
+    root = tmp / "exports"
+    root.mkdir()
+    tests = []
+    for name, outcome in ROUND_TESTS.items():
+        data = gzip.open(EXPORTS / f"{name}.ndjson.gz").read()
+        (root / f"{name}.ndjson").write_bytes(data)
+        tests.append({"name": name, "outcome": outcome, "sha256": sha(data), "size": len(data), "timeout": 300})
+    (tmp / "results.json").write_text(json.dumps({"meta": {"git_revision": "r1"}, "tests": tests}))
+    return stage_tests(tmp / "results.json", tarball=None, sources=[root], store=tmp / "store", allow_mismatch=set())
+
+
+class RoundInputs(unittest.TestCase):
+    def test_every_test_is_measured_in_new_bytes_with_the_same_declarations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            staged = staged_round(tmp)
+            manifest = encode_round(staged, seed="round-2026-12 secret", store=tmp / "store", twin_from=[])
+            self.assertEqual(manifest["seed_sha256"], sha(b"round-2026-12 secret"))
+            originals = {t["name"]: t for t in staged["tests"]}
+            for test in manifest["tests"]:
+                original = originals[test["name"]]
+                path = Path(test["path"])
+                with self.subTest(test=test["name"]):
+                    self.assertEqual(test["sha256"], sha(path.read_bytes()))
+                    self.assertNotEqual(test["sha256"], original["sha256"])
+                    self.assertEqual(test["official_sha256"], original["official_sha256"])
+                    self.assertEqual(test["encoded_from"], original["sha256"])
+                    self.assertEqual(fingerprint(path.read_text()), fingerprint(Path(original["path"]).read_text()))
+                    self.assertEqual((test["outcome"], test["timeout"]), (original["outcome"], original["timeout"]))
+                    self.assertEqual(test["size"], path.stat().st_size)
+
+    def test_a_seed_gives_one_set_of_inputs_and_another_seed_another(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            staged = staged_round(tmp)
+            a = encode_round(staged, seed="a", store=tmp / "store", twin_from=["*"])
+            again = encode_round(staged, seed="a", store=tmp / "store", twin_from=["*"])
+            b = encode_round(staged, seed="b", store=tmp / "store", twin_from=["*"])
+            shas = lambda m: [t["sha256"] for t in m["tests"]]
+            self.assertEqual(shas(a), shas(again))
+            self.assertTrue(set(shas(a)).isdisjoint(shas(b)))
+
+    def test_twins_are_invalid_tests_of_the_accepted_tests_the_patterns_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            staged = staged_round(tmp)
+            manifest = encode_round(staged, seed="s", store=tmp / "store", twin_from=["subject-*", "init-prefix"],
+                                    twin_prefix=150)
+            fresh = {t["name"]: t for t in manifest["tests"] if t["name"].startswith("fresh/")}
+            self.assertEqual(set(fresh), {"fresh/subject-reduction-redex", "fresh/init-prefix"})
+            originals = {t["name"]: t for t in staged["tests"]}
+            for name, twin in fresh.items():
+                source = originals[twin["twin_of"]]
+                before = fingerprint(Path(source["path"]).read_text())
+                after = fingerprint(Path(twin["path"]).read_text())
+                with self.subTest(twin=name):
+                    self.assertEqual(twin["outcome"], "reject")
+                    self.assertEqual(twin["timeout"], source["timeout"])
+                    self.assertEqual(twin["sha256"], sha(Path(twin["path"]).read_bytes()))
+                    self.assertEqual(sum(a != b for a, b in zip(before, after)), 1)
+            self.assertEqual(manifest["twins_refused"], [])
+
+    def test_only_accepted_tests_are_twinned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            manifest = encode_round(staged_round(tmp), seed="s", store=tmp / "store", twin_from=["*"])
+            twinned = {t["twin_of"] for t in manifest["tests"] if t["name"].startswith("fresh/")}
+            self.assertTrue(twinned <= {n for n, o in ROUND_TESTS.items() if o == "accept"})
+
+    def test_a_test_without_a_verified_twin_is_named(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            manifest = encode_round(staged_round(tmp), seed="s", store=tmp / "store", twin_from=["*"],
+                                    verify=lambda path: False)
+            self.assertEqual([t for t in manifest["tests"] if t["name"].startswith("fresh/")], [])
+            self.assertEqual(sorted(manifest["twins_refused"]), ["init-prefix", "proj-maybe-prop", "subject-reduction-redex"])
+
+    def test_the_seed_itself_is_never_in_the_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            manifest = encode_round(staged_round(tmp), seed="do not publish me", store=tmp / "store", twin_from=["*"])
+            self.assertNotIn("do not publish me", json.dumps(manifest))
 
 
 class Environment(unittest.TestCase):

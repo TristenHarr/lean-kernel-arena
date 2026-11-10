@@ -17,6 +17,7 @@ the bytes, the ids and the layout differ.
 
 import hashlib
 import json
+from array import array
 
 from .rng import SplitMix64, seed_from
 
@@ -156,13 +157,17 @@ def _rewrite(record: dict, new_id) -> dict:
     return {id_key: own, key: {**v, "typeName": n(v["typeName"]), "struct": e(v["struct"])}}
 
 
+def _dump_one(record: dict) -> str:
+    return json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n"
+
+
 def parse(text: str) -> list[dict]:
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
 def dump(records) -> str:
     """The exporter's own layout: one compact JSON object per line, keys sorted."""
-    return "".join(json.dumps(r, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n" for r in records)
+    return "".join(_dump_one(r) for r in records)
 
 
 def _table(records) -> dict:
@@ -181,91 +186,111 @@ def _implicit(kind: str, i: int) -> bool:
     return (kind, i) in (("n", 0), ("l", 0))
 
 
-def reencode(text: str, seed: str) -> str:
-    """The export in a seeded order with dense new ids. The term records the original has before
-    each declaration (and after the last) are emitted in an order drawn from the seed, depth first
-    so that each follows everything it refers to; records no declaration uses stay among them."""
-    records = parse(text)
-    table = _table(records)
+def reencode_lines(lines, seed: str):
+    """The re-encoded export, line by line, holding one segment (the term records between two
+    declarations) and the map from old ids to new at a time, so an export of any size streams
+    through. Each segment is emitted in an order drawn from the seed, depth first so that every
+    record follows everything it refers to, and each record takes the next id of its kind as it is
+    emitted; a declaration follows its segment, its references renumbered."""
     rng = SplitMix64(seed_from("reencode", seed))
-    emitted: set = set()
-    order: list[dict] = []
+    new_ids = {kind: array("i") for kind in KINDS}
+    counters = dict(_FIRST_ID)
 
-    def emit(kind: str, i: int):
-        stack = [(kind, i, False)]
-        while stack:
-            k, j, expanded = stack.pop()
-            if _implicit(k, j) or (k, j) in emitted:
-                continue
-            if (k, j) not in table:
-                raise EncodeError(f"{k} {j} is referenced but never defined")
-            record = records[table[(k, j)]]
-            if expanded:
-                emitted.add((k, j))
-                order.append(record)
-                continue
-            stack.append((k, j, True))
-            children = [c for c in references(record) if not _implicit(*c) and c not in emitted]
-            for c in rng_shuffled(children):
-                stack.append((c[0], c[1], False))
+    def assigned(kind: str, i: int) -> bool:
+        table = new_ids[kind]
+        return i < len(table) and table[i] >= 0
 
-    def rng_shuffled(items):
+    def map_id(kind: str, i: int) -> int:
+        if _implicit(kind, i):
+            return i
+        if not assigned(kind, i):
+            raise EncodeError(f"{kind} {i} is referenced but never defined")
+        return new_ids[kind][i]
+
+    def shuffled(items):
         items = list(dict.fromkeys(items))
         for a in range(len(items) - 1, 0, -1):
             b = rng.below(a + 1)
             items[a], items[b] = items[b], items[a]
         return items
 
-    segment: list[tuple[str, int]] = []
-    for record in records:
+    def flush(segment: dict):
+        for root in shuffled(segment):
+            stack = [(root, False)]
+            while stack:
+                key, expanded = stack.pop()
+                kind, i = key
+                if assigned(kind, i):
+                    continue
+                record = segment[key]
+                if expanded:
+                    table = new_ids[kind]
+                    if len(table) <= i:
+                        table.extend([-1] * (i + 1 - len(table)))
+                    table[i] = counters[kind]
+                    counters[kind] += 1
+                    yield _dump_one(_rewrite(record, map_id))
+                    continue
+                stack.append((key, True))
+                children = [c for c in references(record) if not _implicit(*c) and not assigned(*c)]
+                for child in shuffled(children):
+                    if child not in segment:
+                        raise EncodeError(f"{child[0]} {child[1]} is referenced but never defined")
+                    stack.append((child, False))
+
+    segment: dict = {}
+    for line in lines:
+        if not line.strip():
+            continue
+        record = json.loads(line)
         kind = _kind_of(record)
         if kind == "meta":
-            order.append(record)
+            yield _dump_one(record)
         elif kind in KINDS:
-            segment.append((kind, record[_ID_KEY[kind]]))
+            key = (kind, record[_ID_KEY[kind]])
+            if key in segment or assigned(*key):
+                raise EncodeError(f"{kind} {key[1]} is defined twice")
+            segment[key] = record
         else:
-            for ref in references(record):
-                if not _implicit(*ref) and ref not in table:
-                    raise EncodeError(f"{ref[0]} {ref[1]} is referenced but never defined")
-            for key in rng_shuffled(segment):
-                emit(*key)
-            segment = []
-            order.append(record)
-    for key in rng_shuffled(segment):
-        emit(*key)
-
-    renumber = {}
-    counters = dict(_FIRST_ID)
-    for record in order:
-        kind = _kind_of(record)
-        if kind in KINDS:
-            renumber[(kind, record[_ID_KEY[kind]])] = counters[kind]
-            counters[kind] += 1
-
-    def new_id(kind, i):
-        return i if _implicit(kind, i) else renumber[(kind, i)]
-
-    return dump(_rewrite(r, new_id) for r in order)
+            yield from flush(segment)
+            segment = {}
+            yield _dump_one(_rewrite(record, map_id))
+    yield from flush(segment)
 
 
-def fingerprint(text: str) -> list[str]:
-    """One hash per declaration, in order, of the declaration with every reference replaced by the
-    hash of what it denotes: equal lists mean the same declarations, whatever the ids and layout."""
-    records = parse(text)
-    table = _table(records)
-    memo = {("n", 0): "n0", ("l", 0): "l0"}
+def reencode(text: str, seed: str) -> str:
+    """The export re-encoded from the seed (see reencode_lines)."""
+    return "".join(reencode_lines(text.splitlines(), seed))
 
-    def resolve(kind, i):
-        key = (kind, i)
-        if key in memo:
-            return memo[key]
-        stack = [key]
+
+def reencode_file(source, target, seed: str) -> None:
+    """reencode_lines from one file to another, never holding either whole."""
+    with open(source, encoding="utf-8") as src, open(target, "w", encoding="utf-8") as dst:
+        for line in reencode_lines(src, seed):
+            dst.write(line)
+
+
+class Resolver:
+    """What each record of an export denotes: a hash of its structure with every reference resolved
+    (ids and layout play no part), and each name's dotted text."""
+
+    def __init__(self, records):
+        self.records = records
+        self.table = _table(records)
+        self.memo = {("n", 0): "n0", ("l", 0): "l0"}
+        self.texts = {0: ()}
+
+    def hash(self, kind: str, i: int) -> str:
+        memo = self.memo
+        stack = [(kind, i)]
         while stack:
             k, j = stack[-1]
             if (k, j) in memo:
                 stack.pop()
                 continue
-            record = records[table[(k, j)]]
+            if (k, j) not in self.table:
+                raise EncodeError(f"{k} {j} is referenced but never defined")
+            record = self.records[self.table[(k, j)]]
             pending = [c for c in references(record) if c not in memo and c != (k, j)]
             if pending:
                 stack.extend(pending)
@@ -274,13 +299,29 @@ def fingerprint(text: str) -> list[str]:
             body.pop(_ID_KEY[k], None)
             memo[(k, j)] = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:32]
             stack.pop()
-        return memo[key]
+        return memo[(kind, i)]
 
-    out = []
-    for record in records:
-        if _kind_of(record) == "decl":
-            for ref in references(record):
-                resolve(*ref)
-            body = _rewrite(record, lambda kk, ii: memo[(kk, ii)])
-            out.append(hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest())
-    return out
+    def declaration(self, record: dict) -> str:
+        for ref in references(record):
+            self.hash(*ref)
+        body = _rewrite(record, lambda kk, ii: self.memo[(kk, ii)])
+        return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+
+    def name(self, i: int) -> str:
+        chain = []
+        while i not in self.texts:
+            record = self.records[self.table[("n", i)]]
+            body = record.get("str") or record.get("num")
+            chain.append((i, body["pre"], str(body["str"]) if "str" in record else str(body["i"])))
+            i = body["pre"]
+        for j, pre, part in reversed(chain):
+            self.texts[j] = self.texts[pre] + (part,)
+        return ".".join(self.texts[chain[0][0]] if chain else self.texts[i])
+
+
+def fingerprint(text: str) -> list[str]:
+    """One hash per declaration, in order, of the declaration with every reference replaced by the
+    hash of what it denotes: equal lists mean the same declarations, whatever the ids and layout."""
+    records = parse(text)
+    resolver = Resolver(records)
+    return [resolver.declaration(r) for r in records if _kind_of(r) == "decl"]

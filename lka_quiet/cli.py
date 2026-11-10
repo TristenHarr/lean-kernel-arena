@@ -1,6 +1,7 @@
 """The quiet board's commands, dispatched from lka.py:
 
-    lka.py quiet-stage    stage the official round's test inputs, byte for byte, by sha256
+    lka.py quiet-stage    stage the official round's test inputs, byte for byte, by sha256; with a round
+                          seed, measure them re-encoded and add invalid twins (encode_round)
     lka.py quiet-build    build checkers on the quiet box, each as its own user (root helper)
     lka.py quiet-measure  run a measurement session against the staged inputs
     lka.py quiet-score    score a results store into board.json
@@ -9,6 +10,7 @@ Everything here reads and writes plain files; only quiet-build and quiet-measure
 root helper, through the command given with --helper.
 """
 
+import fnmatch
 import hashlib
 import json
 import os
@@ -20,7 +22,9 @@ import time
 from pathlib import Path
 
 from .board import score_board
+from .encode import reencode_file
 from .session import RunStore, Session, current_records
+from .twins import twin_file
 
 MANIFEST_SCHEMA = "lka-quiet-tests/1"
 
@@ -119,6 +123,56 @@ def stage_tests(results_json: Path, *, tarball: Path | None, sources, store: Pat
         raise StageError("cannot stage:\n  " + "\n  ".join(problems))
     return {"schema": MANIFEST_SCHEMA, "arena_revision": published.get("meta", {}).get("git_revision"),
             "tests": staged}
+
+
+def _store_file(store: Path, produce) -> tuple[str | None, Path | None, object]:
+    """Write a file with `produce(path)` beside the store, then file it by its sha256; the digest
+    and path are None when `produce` left no file. Returns what `produce` returned too."""
+    store.mkdir(parents=True, exist_ok=True)
+    scratch = store / f".scratch-{os.getpid()}.ndjson"
+    try:
+        produced = produce(scratch)
+        if not scratch.exists():
+            return None, None, produced
+        digest = _sha_file(scratch)
+        path = _put(store, digest, lambda target: os.replace(scratch, target))
+    finally:
+        scratch.unlink(missing_ok=True)
+    return digest, path, produced
+
+
+def encode_round(manifest: dict, *, seed: str, store: Path, twin_from, twin_prefix: int = 400,
+                 verify=None, twin_tries: int = 20) -> dict:
+    """The round's inputs from the staged ones: every test re-encoded from the round's seed (the file
+    measured from then on, its declarations and verdict unchanged, its bytes new), and for each test
+    to be accepted whose name matches a `twin_from` pattern, an invalid twin `fresh/<name>` (see
+    twins.py) that `verify` confirms, the official kernel rejecting it. The manifest commits to the
+    seed by its sha256 and never holds it; whoever has the seed can rebuild every input. A test
+    with no verified twin among its first `twin_tries` candidates is named in `twins_refused`."""
+    store = Path(store)
+    tests, twins, refused = [], [], []
+    for test in manifest["tests"]:
+        source = Path(test["path"])
+        digest, path, _ = _store_file(store, lambda scratch: reencode_file(source, scratch, seed))
+        tests.append({**test, "sha256": digest, "path": str(path), "size": path.stat().st_size,
+                      "encoded_from": test["sha256"]})
+    for test in manifest["tests"]:
+        if test.get("outcome") != "accept" or not any(fnmatch.fnmatchcase(test["name"], p) for p in twin_from):
+            continue
+        source = Path(test["path"])
+        digest, path, twin = _store_file(store, lambda scratch: twin_file(
+            source, scratch, seed, prefix_declarations=twin_prefix, verify=verify, max_tries=twin_tries))
+        if twin is None:
+            refused.append(test["name"])
+            continue
+        entry = {"name": f"fresh/{test['name']}", "outcome": "reject", "sha256": digest, "path": str(path),
+                 "size": path.stat().st_size, "twin_of": test["name"], "official_sha256": None,
+                 "official_match": None}
+        if test.get("timeout") is not None:
+            entry["timeout"] = test["timeout"]
+        twins.append(entry)
+    return {**manifest, "tests": tests + sorted(twins, key=lambda t: t["name"]),
+            "seed_sha256": hashlib.sha256(seed.encode()).hexdigest(), "twins_refused": sorted(refused)}
 
 
 def run_env(environ) -> dict:

@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lka_quiet.encode import EncodeError, dump, fingerprint, parse, reencode, references
+from lka_quiet.encode import EncodeError, dump, fingerprint, parse, reencode, reencode_file, reencode_lines, references
 
 EXPORTS = sorted((Path(__file__).parent / "fixtures" / "exports").glob("*.ndjson.gz"))
 SEEDS = ("season-1", "round-2026-12", "x")
@@ -113,6 +113,31 @@ class Reencode(unittest.TestCase):
     def test_reencoding_twice_keeps_every_declaration(self):
         text = read(EXPORTS[0])
         self.assertEqual(fingerprint(reencode(reencode(text, "a"), "b")), fingerprint(text))
+
+
+class Streaming(unittest.TestCase):
+    def test_output_comes_before_the_input_ends(self):
+        lines = read(next(p for p in EXPORTS if "init-prefix" in p.name)).splitlines(keepends=True)
+        consumed = []
+
+        def source():
+            for line in lines:
+                consumed.append(line)
+                yield line
+
+        stream = reencode_lines(source(), "season-1")
+        first = [next(stream) for _ in range(50)]
+        self.assertEqual(len(first), 50)
+        self.assertLess(len(consumed), len(lines) / 4)
+
+    def test_a_file_streams_to_the_same_bytes(self):
+        for path in EXPORTS:
+            text = read(path)
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(export=path.name):
+                source, target = Path(tmp) / "in.ndjson", Path(tmp) / "out.ndjson"
+                source.write_text(text)
+                reencode_file(source, target, "season-1")
+                self.assertEqual(target.read_text(), reencode(text, "season-1"))
 
 
 class Refusals(unittest.TestCase):

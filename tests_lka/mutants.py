@@ -200,7 +200,11 @@ MUTANTS = [
      "a library cell is shaded darkest for the best"),
     ("lka_quiet/encode.py", "        for a in range(len(items) - 1, 0, -1):\n", "        for a in range(0):\n",
      "a re-encoding is drawn from its seed"),
-    ("lka_quiet/encode.py", "            stack.append((k, j, True))\n", "            emitted.add((k, j))\n            order.append(record)\n",
+    ("lka_quiet/encode.py",
+     "                stack.append((key, True))\n                children = [c for c in references(record) if not _implicit(*c) and not assigned(*c)]\n",
+     "                children = [c for c in references(record) if not _implicit(*c) and not assigned(*c)]\n"
+     "                stack.extend((child, False) for child in children if child in segment)\n"
+     "                stack.append((key, True))\n                children = []\n",
      "a record is emitted after everything it refers to"),
     ("lka_quiet/encode.py", "            counters[kind] += 1\n", "",
      "ids are renumbered densely in the new order"),
