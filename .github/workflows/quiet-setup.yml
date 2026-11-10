@@ -42,7 +42,7 @@ jobs:
           git merge --no-edit upstream/master || { git merge --abort; echo "::error::upstream does not merge cleanly; resolve by hand"; exit 1; }
           git push origin HEAD:master
           echo "### Imported" >> "$GITHUB_STEP_SUMMARY"
-          ls checkers/*.yaml | sed 's#checkers/\(.*\)\.yaml#- \1#' >> "$GITHUB_STEP_SUMMARY"
+          for file in checkers/*.yaml; do name="${file#checkers/}"; echo "- ${name%.yaml}"; done >> "$GITHUB_STEP_SUMMARY"
       - name: Build every checker and start measuring
         env:
           GH_TOKEN: ${{ github.token }}
