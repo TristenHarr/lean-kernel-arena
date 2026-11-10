@@ -107,6 +107,7 @@ def build_request(checker, test, lane, machine, *, env, round_id, pass_index, se
         "workdir": checker_workdir(checker, machine),
         "input": test["path"],
         "timeout_s": float(scaled_timeout(test.get("timeout"), checker.get("timeout"), machine)),
+        "cap_s": float(scaled_timeout(test.get("timeout"), None, machine)),
         "env": dict(env),
         "checker_hash": checker["source_hash"],
         "test_sha256": test["sha256"],
@@ -117,11 +118,12 @@ def build_request(checker, test, lane, machine, *, env, round_id, pass_index, se
     }
 
 
-def declined_record(checker, test, lane, *, round_id, epoch) -> dict:
+def declined_record(checker, test, lane, machine, *, round_id, epoch) -> dict:
     return {
         "schema": RUN_SCHEMA, "checker": checker["name"], "test": test["name"], "lane": lane,
         "expected": test.get("outcome"), "status": "declined", "correctness": "declined", "declared": True,
         "valid": True, "invalid_reasons": [], "wall_s": 0.0, "memory_peak_bytes": None, "energy_j": None,
+        "cap_s": float(scaled_timeout(test.get("timeout"), None, machine)),
         "checker_hash": checker["source_hash"], "test_sha256": test["sha256"], "epoch": epoch,
         "round": round_id, "pass": None,
     }
@@ -161,7 +163,7 @@ class Session:
                     continue
                 for lane in self.lanes:
                     if not current.get(Cell(checker["name"], test["name"], lane)):
-                        self.store.append(declined_record(checker, test, lane, round_id=self.round_id,
+                        self.store.append(declined_record(checker, test, lane, self.machine, round_id=self.round_id,
                                                           epoch=self.store.epoch))
 
     def _read_sentinel(self) -> bool:

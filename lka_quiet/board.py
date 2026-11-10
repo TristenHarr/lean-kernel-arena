@@ -48,10 +48,12 @@ def _round(x, digits=10):
 
 @dataclass
 class CellSummary:
+    cell: Cell
     status: str | None
     valid: list[dict]
     invalid: int
     timeout_s: float | None
+    cap_s: float | None
     flaky: bool
     accepted_any: bool
     accepted: list[dict] = field(default_factory=list)
@@ -79,11 +81,14 @@ def summarize_cells(records) -> dict[Cell, CellSummary]:
     for cell, cell_records in grouped.items():
         valid = [r for r in cell_records if r.get("valid")]
         timeouts = [r.get("timeout_s") for r in valid if r.get("timeout_s")]
+        caps = [r.get("cap_s") for r in valid if r.get("cap_s")]
         out[cell] = CellSummary(
+            cell=cell,
             status=consensus_status(valid),
             valid=valid,
             invalid=len(cell_records) - len(valid),
             timeout_s=max(timeouts) if timeouts else None,
+            cap_s=max(caps) if caps else (max(timeouts) if timeouts else None),
             flaky=len({r["status"] for r in valid}) > 1,
             accepted_any=any(r["status"] == "accepted" for r in valid),
             accepted=[r for r in valid if r["status"] == "accepted"],
@@ -174,8 +179,11 @@ def _bootstrap_median_cdf(n: int) -> list[float]:
 
 
 def _penalty(metric: dict, summary: CellSummary, scoring: dict) -> float:
+    """Twice the test's cap: the test's own limit, never a shorter one the checker set for itself."""
     factor = scoring.get("failure_factor", 2)
-    timeout = summary.timeout_s or scoring.get("default_timeout_s", 0)
+    if not summary.cap_s:
+        raise BoardError(f"{summary.cell.checker} on {summary.cell.test} ({summary.cell.lane}) failed with no cap to score it at")
+    timeout = summary.cap_s
     quantity = metric["quantity"]
     if quantity == "wall_s":
         return factor * timeout
@@ -310,7 +318,7 @@ def score_board(tests, checkers, records, scoring: dict) -> dict:
 
     bootstrap = scoring["bootstrap"]
     confidence = bootstrap.get("confidence", 0.95)
-    replicates = _bootstrap(ranked, values, categories, family_split(tests, scoring["families"]), bootstrap)
+    replicates = _bootstrap(names, values, categories, family_split(tests, scoring["families"]), bootstrap)
 
     entries = {name: {"name": name, "reference": name == reference, "ranked": name in ranked,
                       "gates": gates[name], "categories": {}} for name in names}
@@ -323,7 +331,11 @@ def score_board(tests, checkers, records, scoring: dict) -> dict:
         draws = replicates[cat_id]
         wins = {a: {b: 0.0 for b in contenders if b != a} for a in contenders}
         rank_samples = {n: [] for n in contenders}
+        factor_samples = {n: [] for n in names}
         for replicate in draws:
+            if reference in replicate:
+                for n, score in replicate.items():
+                    factor_samples[n].append(math.exp(-(score - replicate[reference])))
             scores = {n: replicate[n] for n in contenders}
             for n, r in _competition_ranks(scores).items():
                 rank_samples[n].append(r)
@@ -348,9 +360,12 @@ def score_board(tests, checkers, records, scoring: dict) -> dict:
         for name in names:
             score = raw[cat_id][name]
             relative = None if score is None or ref_raw is None else score - ref_raw
+            samples = factor_samples[name] if relative is not None else []
             result = {
                 "score": _round(relative),
                 "factor": _round(math.exp(-relative), 6) if relative is not None else None,
+                "factor_lo": _round(quantile_nearest_rank(samples, (1 - confidence) / 2), 6) if samples else None,
+                "factor_hi": _round(quantile_nearest_rank(samples, upper_q), 6) if samples else None,
                 "rank": None, "rank_lo": None, "rank_hi": None, "tied": False,
             }
             if name in display_rank:
@@ -404,10 +419,12 @@ def score_board(tests, checkers, records, scoring: dict) -> dict:
 
 
 def _display_order(entries, names, cat_id):
+    """Ranked checkers by their estimate (the rank column says which gaps are significant), then
+    the unranked with a score, then those still being measured."""
     def key(name):
         result = entries[name]["categories"][cat_id]
-        return (result["rank"] is None, result["rank"] or 0,
-                result["score"] if result["score"] is not None else math.inf, name)
+        group = 0 if result["rank"] is not None else 1 if result["score"] is not None else 2
+        return (group, result["score"] if result["score"] is not None else math.inf, name)
     return sorted(names, key=key)
 
 
@@ -415,14 +432,14 @@ def _display_order(entries, names, cat_id):
 # Bootstrap
 
 
-def _bootstrap(ranked, values, categories, splits, config) -> dict[str, list[dict]]:
+def _bootstrap(names, values, categories, splits, config) -> dict[str, list[dict]]:
     rng = SplitMix64(seed_from(str(config["seed"]), "bootstrap"))
     replicates = config["replicates"]
     out = {cat["id"]: [] for cat in categories}
     family_ids = sorted({f for cat in categories for f in cat["families"]})
     plans = {family_id: splits[family_id] for family_id in family_ids}
 
-    contenders = list(ranked)
+    contenders = list(names)
     for _ in range(replicates):
         logs = {}
         for name in contenders:

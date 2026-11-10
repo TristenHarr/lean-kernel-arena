@@ -111,6 +111,13 @@ MUTANTS = [
      "declared declines are recorded without running"),
     ("lka_quiet/plan.py", "    if any(r.get(\"declared\") for r in runs):\n", "    if False:\n",
      "a declared decline is final"),
+    ("lka_quiet/board.py", "    timeout = summary.cap_s\n", "    timeout = summary.timeout_s or summary.cap_s\n",
+     "a failure is scored at the test's cap, never the checker's own shorter limit"),
+    ("lka_quiet/board.py", "        return (group, result[\"score\"] if result[\"score\"] is not None else math.inf, name)",
+     "        return (group, result[\"rank\"] or 0, name)", "rows follow the point estimates"),
+    ("lka_quiet/session.py",
+     "        \"cap_s\": float(scaled_timeout(test.get(\"timeout\"), None, machine)),\n        \"checker_hash\": checker[\"source_hash\"], \"test_sha256\"",
+     "        \"checker_hash\": checker[\"source_hash\"], \"test_sha256\"", "a declared decline carries the test's cap"),
 ]
 
 

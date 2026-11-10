@@ -55,7 +55,7 @@ class FakeMeasure:
         valid = len(self.calls) > self.invalid_first
         return {
             "schema": "lka-quiet-run/1", **{k: request[k] for k in (
-                "checker", "test", "lane", "expected", "timeout_s", "checker_hash", "test_sha256",
+                "checker", "test", "lane", "expected", "timeout_s", "cap_s", "checker_hash", "test_sha256",
                 "epoch", "round", "pass", "seq")},
             "status": status, "wall_s": self.wall, "memory_peak_bytes": 1 << 26, "energy_j": 1.0,
             "valid": valid, "invalid_reasons": [] if valid else ["interference: test"],
@@ -135,6 +135,7 @@ class Requests(unittest.TestCase):
         self.assertEqual(request["input"], "/srv/lka/tests/s-prelude.ndjson")
         self.assertEqual(request["cmd"], 'fast "$IN"')
         self.assertEqual(request["timeout_s"], 60.0)  # min(50, 30) x 2.0
+        self.assertEqual(request["cap_s"], 100.0)  # the test's own 50 x 2.0, whatever the checker sets
         self.assertEqual(request["expected"], "accept")
         self.assertEqual((request["checker_hash"], request["test_sha256"]), ("h-fast", "s-prelude"))
         self.assertEqual((request["round"], request["pass"], request["seq"], request["epoch"]), ("r", 2, 9, "e"))
@@ -154,6 +155,7 @@ class Sessions(unittest.TestCase):
             declined = [r for r in store.records() if r["checker"] == "fast" and r["test"] == "mathlib"]
             self.assertEqual(len(declined), 2)
             self.assertTrue(all(r["declared"] and r["status"] == "declined" for r in declined))
+            self.assertTrue(all(r["cap_s"] == 5680 * 2.0 for r in declined), "a decline is scored at the test's own cap")
             self.assertFalse(any(c["checker"] == "fast" and c["test"] == "mathlib" for c in sess.measure.calls))
 
     def test_runs_to_completion(self):

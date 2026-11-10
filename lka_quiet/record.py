@@ -26,7 +26,7 @@ OUTPUT_HEAD = 8192
 OUTPUT_TAIL = 8192
 
 _REQUEST_FIELDS = (
-    "checker", "test", "lane", "expected", "timeout_s", "checker_hash", "test_sha256",
+    "checker", "test", "lane", "expected", "timeout_s", "cap_s", "checker_hash", "test_sha256",
     "epoch", "round", "pass", "seq",
 )
 

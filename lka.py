@@ -3326,6 +3326,10 @@ def main() -> int:
         help="Leave out tests marked with 'skip-on-ci: true' in YAML",
     )
 
+    # The quiet board's commands (see lka_quiet/cli.py)
+    from lka_quiet import cli as quiet_cli
+    quiet_cli.add_parsers(subparsers)
+
     args = parser.parse_args()
 
     # Set global verbose flag
@@ -3357,6 +3361,8 @@ def main() -> int:
         return cmd_ci_merge(args)
     elif args.command == "ci-select":
         return cmd_ci_select(args)
+    elif args.command in quiet_cli.COMMANDS:
+        return quiet_cli.COMMANDS[args.command](args, sys.modules[__name__])
     else:
         parser.print_help()
         return 1

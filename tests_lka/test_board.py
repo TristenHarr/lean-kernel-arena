@@ -63,11 +63,13 @@ SCORING = {
 LANES = ("4core", "1core")
 
 
-def run(checker, test, lane, status="accepted", wall=1.0, memory=100 * 2**20, energy=10.0, epoch="e1", valid=True, timeout=200.0):
+def run(checker, test, lane, status="accepted", wall=1.0, memory=100 * 2**20, energy=10.0, epoch="e1", valid=True, timeout=200.0,
+        cap=None):
     return {
         "schema": "lka-quiet-run/1", "checker": checker, "test": test, "lane": lane, "status": status,
         "wall_s": wall, "memory_peak_bytes": memory, "energy_j": energy, "epoch": epoch, "valid": valid,
-        "timeout_s": timeout, "counters": {"instructions_u": int(wall * 1e9), "cycles_u": int(wall * 8e8)},
+        "timeout_s": timeout, "cap_s": cap if cap is not None else timeout,
+        "counters": {"instructions_u": int(wall * 1e9), "cycles_u": int(wall * 8e8)},
     }
 
 
@@ -186,6 +188,51 @@ class Failures(unittest.TestCase):
         self.assertEqual(tests["E"]["value"], 2 * 25 * 200.0)
 
 
+class NoGamingTheCap(unittest.TestCase):
+    def test_a_short_self_declared_timeout_buys_nothing(self):
+        # quitter's own 1 s limit kills it on mathlib; slow finishes in 150 s. The penalty is the
+        # test's cap (200 s here), never the checker's own limit.
+        quit_runs = {("mathlib", lane): [run("quitter", "mathlib", lane, status="timeout", wall=1.0, timeout=1.0, cap=200.0)]
+                     for lane in LANES}
+        slow_runs = {("mathlib", lane): [run("slow", "mathlib", lane, wall=150.0, cap=200.0)] * 3 for lane in LANES}
+        board = board_for(checker_runs("official"), checker_runs("quitter", overrides=quit_runs),
+                          checker_runs("slow", overrides=slow_runs))
+        self.assertEqual(entry(board, "quitter")["tests"]["mathlib"]["T4"]["value"], 400.0)
+        quitter = entry(board, "quitter")["categories"]["mathlib"]["score"]
+        slow = entry(board, "slow")["categories"]["mathlib"]["score"]
+        self.assertGreater(quitter, slow)
+
+
+class MissingCaps(unittest.TestCase):
+    def test_a_failure_without_a_cap_is_refused(self):
+        declined = {("std", lane): [dict(run("d", "std", lane, status="declined", wall=0.0), cap_s=None, timeout_s=None)]
+                    for lane in LANES}
+        with self.assertRaisesRegex(BoardError, "std"):
+            board_for(checker_runs("official"), checker_runs("d", overrides=declined))
+
+
+class DisplayOrder(unittest.TestCase):
+    def test_rows_follow_the_point_estimates_even_where_ranks_do_not(self):
+        # x's estimate (1.90x) is below y's (1.98x), but x's interval is wide: only a beats x
+        # significantly (rank 2), while b beats y significantly too (rank 3). Rows still go by estimate.
+        def wide(name):
+            over = {}
+            for lane in LANES:
+                over[("perf/a", lane)] = [run(name, "perf/a", lane, wall=2.0 * 0.05)] * 3
+                over[("perf/b", lane)] = [run(name, "perf/b", lane, wall=2.0 * 1.0)] * 3
+            return checker_runs(name, scale=0.5, overrides=over, jitter=0.0)
+
+        board = board_for(checker_runs("official", jitter=0.0),
+                          checker_runs("a", scale=0.1, mem_scale=0.1, energy_scale=0.1, jitter=0.0),
+                          checker_runs("b", scale=0.5, mem_scale=0.5, energy_scale=0.5, jitter=0.0),
+                          checker_runs("y", scale=0.505, mem_scale=0.505, energy_scale=0.505, jitter=0.0),
+                          wide("x"))
+        ranks = {n: entry(board, n)["categories"]["overall"]["rank"] for n in "abxy"}
+        self.assertEqual(ranks, {"a": 1, "b": 2, "x": 2, "y": 3})
+        overall = next(c for c in board["categories"] if c["id"] == "overall")
+        self.assertEqual(overall["order"][:4], ["a", "b", "y", "x"])
+
+
 class Gates(unittest.TestCase):
     def test_accepting_a_bad_proof_once_is_unsound(self):
         bad = {("bugs/bad1", "1core"): [run("u", "bugs/bad1", "1core", status="rejected")] * 2
@@ -259,6 +306,40 @@ class Uncertainty(unittest.TestCase):
         board = board_for(checker_runs("official"), checker_runs("a", scale=0.1), checker_runs("b", scale=0.9))
         self.assertEqual(board["head_to_head"]["overall"]["a"]["b"], 1.0)
         self.assertEqual(board["head_to_head"]["overall"]["b"]["a"], 0.0)
+
+
+class FactorIntervals(unittest.TestCase):
+    def test_interval_brackets_the_estimate(self):
+        board = board_for(checker_runs("official"), checker_runs("a", scale=0.5, mem_scale=0.7),
+                          checker_runs("b", scale=1.3, energy_scale=0.6))
+        for name in ("a", "b"):
+            for category in board["categories"]:
+                result = entry(board, name)["categories"][category["id"]]
+                self.assertLessEqual(result["factor_lo"], result["factor"] * (1 + 1e-9), (name, category["id"]))
+                self.assertGreaterEqual(result["factor_hi"], result["factor"] * (1 - 1e-9), (name, category["id"]))
+
+    def test_a_uniform_factor_has_a_tight_interval(self):
+        board = board_for(checker_runs("official"), checker_runs("a", scale=0.5, mem_scale=0.5, energy_scale=0.5))
+        overall = entry(board, "a")["categories"]["overall"]
+        self.assertAlmostEqual(overall["factor_lo"], 2.0, delta=0.02)
+        self.assertAlmostEqual(overall["factor_hi"], 2.0, delta=0.02)
+
+    def test_mirror_specialists_have_wide_intervals(self):
+        def specialist(name, fast_test, even_test):
+            over = {}
+            for lane in LANES:
+                over[(fast_test, lane)] = [run(name, fast_test, lane, wall=0.2)] * 3
+                over[(even_test, lane)] = [run(name, even_test, lane, wall=2.0)] * 3
+            return checker_runs(name, scale=0.5, overrides=over, jitter=0.0)
+
+        board = board_for(checker_runs("official", jitter=0.0), specialist("a", "perf/a", "perf/b"))
+        stress = entry(board, "a")["categories"]["multi-core"]
+        self.assertGreater(stress["factor_hi"] / stress["factor_lo"], 1.3)
+
+    def test_the_reference_is_exactly_one(self):
+        board = board_for(checker_runs("official"), checker_runs("a", scale=0.5))
+        overall = entry(board, "official")["categories"]["overall"]
+        self.assertEqual((overall["factor_lo"], overall["factor_hi"]), (1.0, 1.0))
 
 
 class Pareto(unittest.TestCase):

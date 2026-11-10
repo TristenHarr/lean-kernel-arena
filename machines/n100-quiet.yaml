@@ -40,9 +40,12 @@ sandbox:
   homes: /srv/lka/checkers   # each checker's home is homes/<name>
   tmp_bytes: 4294967296      # each run's private /tmp
 
+# A run is killed at the test's arena limit times box_factor (or the checker's own, if shorter).
+# A failure is scored at twice the test's limit alone, so a short limit of the checker's own
+# buys nothing. Tests the arena sets no limit for get default_s.
 timeouts:
   box_factor: null           # calibrated: official's wall time here over its wall time on the arena's runner
-  default_s: 21600
+  default_s: 300
   minimum_s: 30
 
 repetitions:
