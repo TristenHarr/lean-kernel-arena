@@ -1,0 +1,47 @@
+# The round a quiet-box job measures: Lean's own kernel built for the runner (an invalid twin is staged
+# only if it rejects it), the round's seed (a calendar month's, drawn once, kept on the box at 0600 and
+# published when the round is over), and the round's inputs, re-encoded from the seed with the twins the
+# season names; restaged only when the Arena publishes a new revision. Sets ROUND for the job.
+# Needs STATE and SEASON in the environment, and the board's tree checked out at `tree`.
+name: Quiet round
+description: Build the twin-verifying kernel, draw the round's seed and stage the round's inputs
+inputs:
+  tree:
+    description: The checkout of master the board's code is taken from
+    default: "."
+runs:
+  using: composite
+  steps:
+    - name: Build the kernel that verifies invalid twins
+      shell: bash
+      working-directory: ${{ inputs.tree }}
+      run: |
+        rsync -a --delete checkers/official/ "$STATE/verifier/"
+        nix develop --command bash -c 'cd "$STATE/verifier" && lake build'
+
+    - name: The round and its seed
+      shell: bash
+      run: |
+        round="$(date -u +%Y-%m)"
+        echo "ROUND=$round" >> "$GITHUB_ENV"
+        install -d -m 0700 "$STATE/rounds/$round"
+        if [ ! -s "$STATE/rounds/$round/seed" ]; then
+          (umask 077 && od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$STATE/rounds/$round/seed")
+        fi
+
+    - name: Stage the round's inputs
+      shell: bash
+      working-directory: ${{ inputs.tree }}
+      run: |
+        round="$(date -u +%Y-%m)"
+        curl -fsSL -o "$STATE/published/results.json" https://arena.lean-lang.org/results.json
+        curl -fsSL -o "$STATE/published/lean-arena-tests.tar.gz" https://arena.lean-lang.org/lean-arena-tests.tar.gz
+        manifest="$STATE/rounds/$round/manifest.json"
+        if [ -s "$manifest" ] && python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); r = json.load(open(sys.argv[2])); sys.exit(m["arena_revision"] != r["meta"]["git_revision"])' "$manifest" "$STATE/published/results.json"; then
+          echo "the round's inputs are staged for this arena revision"
+        else
+          nix develop --command python3 lka.py quiet-stage --published "$STATE/published" \
+            --source "$STATE/exports" --store "$STATE/tests" --manifest "$manifest" --allow-mismatch cedar \
+            --round-seed "$STATE/rounds/$round/seed" --season "$SEASON" \
+            --verify-with "$STATE/verifier/.lake/build/bin/kernel"
+        fi

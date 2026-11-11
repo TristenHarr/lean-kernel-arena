@@ -1,0 +1,128 @@
+# A pull request on the quiet box, beside GitHub's own checks (quiet-board.yml's check job). Once a
+# maintainer approves the run (environment quiet-box), the checkers the pull request adds or changes are
+# built in the sandbox as pr<N>-<name>, measured on this round's inputs beside every checker on the board,
+# and their places, ranges and factors in every category are commented on the pull request.
+#
+# The workflow and every line of the board's own code come from master (pull_request_target); the pull
+# request's head is checked out without credentials and only read, as data: its checkers run only inside
+# the sandbox, like any checker's. When the pull request closes, its checkers' users and homes go.
+name: Quiet board, pull request
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: quiet-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  MACHINE: machines/n100-quiet.yaml
+  SEASON: scoring/season-1.yaml
+  STATE: /srv/lka
+  PR: ${{ github.event.pull_request.number }}
+
+jobs:
+  measure:
+    name: Measure the pull request's checkers on the quiet box
+    if: vars.QUIET_BOARD == 'on' && github.event.action != 'closed'
+    runs-on: [self-hosted, linux, x64, lka-n100-quiet]
+    environment: quiet-box
+    timeout-minutes: 1440
+    steps:
+      - name: master, the board's code
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          path: base
+          persist-credentials: false
+      - name: The pull request's head, as data
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: head
+          persist-credentials: false
+
+      - name: Stage its checkers beside master's
+        id: stage
+        working-directory: base
+        run: |
+          install -d -m 0755 "$STATE/pr/$PR"
+          nix develop --command python3 lka.py quiet-pr-stage --base . --head ../head --number "$PR" \
+            --out "$STATE/pr/$PR/arena" --names-file "$STATE/pr/$PR/names"
+          echo "count=$(wc -l < "$STATE/pr/$PR/names")" >> "$GITHUB_OUTPUT"
+
+      - name: Nothing to measure
+        if: steps.stage.outputs.count == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" \
+            --body "This pull request adds or changes no checker, so the quiet box has nothing to measure."
+
+      - name: Build them
+        if: steps.stage.outputs.count != '0'
+        working-directory: ${{ env.STATE }}/pr/${{ env.PR }}/arena
+        run: |
+          nix develop --command python3 lka.py quiet-build --checker "pr$PR-*" --arena "$STATE/pr/$PR/arena" \
+            --results "$STATE/pr/$PR/results" --force
+
+      - if: steps.stage.outputs.count != '0'
+        uses: ./base/.github/actions/quiet-round
+        with:
+          tree: base
+
+      - name: Quiet the machine
+        if: steps.stage.outputs.count != '0'
+        run: sudo -n /usr/local/libexec/lka/lka-quiet on
+
+      - name: Preflight
+        if: steps.stage.outputs.count != '0'
+        run: sudo -n /usr/local/libexec/lka/lka-preflight --check
+
+      - name: Measure them until each cell is measured enough
+        if: steps.stage.outputs.count != '0'
+        working-directory: ${{ env.STATE }}/pr/${{ env.PR }}/arena
+        run: |
+          nix develop --command python3 lka.py quiet-measure --machine "$MACHINE" \
+            --manifest "$STATE/rounds/$ROUND/manifest.json" --results "$STATE/pr/$PR/results" --round "$ROUND" \
+            --checker "pr$PR-*" --budget-hours 20
+
+      - name: Leave the quiet state
+        if: always() && steps.stage.outputs.count != '0'
+        run: sudo -n /usr/local/libexec/lka/lka-quiet off
+
+      - name: Score them beside the board and report
+        if: steps.stage.outputs.count != '0'
+        working-directory: ${{ env.STATE }}/pr/${{ env.PR }}/arena
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          nix develop --command python3 lka.py quiet-score --season "$SEASON" --machine "$MACHINE" \
+            --manifest "$STATE/rounds/$ROUND/manifest.json" --results "$STATE/results" \
+            --extra-results "$STATE/pr/$PR/results" --epoch-file /etc/lka/epoch --out "$RUNNER_TEMP/pr-board.json"
+          nix develop --command python3 lka.py quiet-pr-report --board "$RUNNER_TEMP/pr-board.json" \
+            --checkers "pr$PR-*" --machine-name "N100 quiet box" > "$RUNNER_TEMP/report.md"
+          cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/report.md" --edit-last \
+            || gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/report.md"
+
+  forget:
+    name: Remove the pull request's checkers from the quiet box
+    if: vars.QUIET_BOARD == 'on' && github.event.action == 'closed'
+    runs-on: [self-hosted, linux, x64, lka-n100-quiet]
+    steps:
+      - name: Their users, homes and staged tree
+        run: |
+          names="$STATE/pr/$PR/names"
+          if [ -f "$names" ]; then
+            while read -r name; do
+              printf '{"checker": "%s"}' "$name" | sudo -n /usr/local/libexec/lka/lka-measure --remove
+            done < "$names"
+          fi
+          rm -rf -- "${STATE:?}/pr/${PR:?}"

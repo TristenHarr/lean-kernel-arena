@@ -7,7 +7,12 @@ PGO with `../../../../lka.py build-test init` find exactly the layout they expec
 the internet (sources, toolchains, crates) but nothing near: an nftables policy on the group's
 sockets drops every private, shared and link-local destination. Runs get no network at all.
 
+A pull request's version of a checker is built as pr<N>-<name>, from the PR's own staged tree
+(state/pr/<N>/arena): its own user, home and build record, so it can never stand in for the board's
+build of the same checker. Only such a checker can be removed, when its PR closes.
+
     quietbox/lka-measure --build      (root; one build request on stdin, a build record on stdout)
+    quietbox/lka-measure --remove     (root; {"checker": "pr<N>-<name>"} on stdin)
 """
 
 import os
@@ -19,6 +24,7 @@ from pathlib import Path
 CHECKER_GROUP = "lka-checkers"
 
 _NAME = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+_PR_NAME = re.compile(r"^pr([1-9][0-9]*)-[a-z0-9][a-z0-9._-]*$")
 _NEAR = (
     "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16", "127.0.0.0/8",
     "0.0.0.0/8", "224.0.0.0/4", "240.0.0.0/4",
@@ -36,9 +42,11 @@ def validate_build_request(req: dict, machine: dict) -> None:
     name = req.get("checker")
     if not isinstance(name, str) or not _NAME.match(name) or ".." in name:
         raise BuildError(f"checker name {name!r} is not a plain name")
-    staged = os.path.join(machine["paths"]["state"], "arena")
+    pr = _PR_NAME.match(name)
+    state = machine["paths"]["state"]
+    staged = os.path.join(state, "pr", pr.group(1), "arena") if pr else os.path.join(state, "arena")
     if os.path.normpath(str(req.get("arena", ""))) != staged:
-        raise BuildError(f"the arena tree to build from must be the staged one, {staged}")
+        raise BuildError(f"the arena tree to build {name} from must be {staged}")
     timeout = req.get("timeout_s")
     if not isinstance(timeout, (int, float)) or timeout <= 0:
         raise BuildError(f"timeout_s {timeout!r} must be positive")
@@ -61,6 +69,20 @@ def build_plan(req: dict, machine: dict, *, user: str, uid: int, gid: int) -> li
                   "-p", f"TasksMax={machine['memory']['pids_max']}", "--",
                   "setpriv", f"--reuid={uid}", f"--regid={gid}", "--init-groups", "--no-new-privs", "--",
                   "env", "-i", *env, *devshell], "cwd": arena},
+    ]
+
+
+def validate_removal(name) -> None:
+    if not isinstance(name, str) or not _PR_NAME.match(name) or ".." in name or "/" in name:
+        raise BuildError(f"{name!r} is not a pull request's checker; only those are ever removed")
+
+
+def removal_plan(name: str, machine: dict, *, user: str) -> list[dict]:
+    home = os.path.join(machine["sandbox"]["homes"], name)
+    return [
+        {"argv": ["pkill", "-KILL", "-u", user], "cwd": "/", "may_fail": True},
+        {"argv": ["userdel", user], "cwd": "/", "may_fail": True},
+        {"argv": ["rm", "-rf", "--one-file-system", "--", home], "cwd": "/"},
     ]
 
 
@@ -128,3 +150,15 @@ def run_build(req: dict, machine: dict) -> dict:
     tail = log_path.read_bytes()[-16384:].decode(errors="replace")
     return {"checker": req["checker"], "user": user, "exit_code": exit_code, "ok": exit_code == 0,
             "duration_s": round(time.monotonic() - started, 3), "log": str(log_path), "log_tail": tail}
+
+
+def remove_checker(req: dict, machine: dict) -> dict:
+    from .helper import checker_user
+    name = req.get("checker")
+    validate_removal(name)
+    user = checker_user(name, machine["sandbox"]["user_prefix"])
+    for step in removal_plan(name, machine, user=user):
+        result = subprocess.run(step["argv"], cwd=step["cwd"], capture_output=True)
+        if result.returncode != 0 and not step.get("may_fail"):
+            return {"checker": name, "ok": False, "step": step["argv"][0], "stderr": result.stderr.decode()[-4096:]}
+    return {"checker": name, "ok": True}

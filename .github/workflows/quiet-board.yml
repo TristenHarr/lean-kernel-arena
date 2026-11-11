@@ -73,37 +73,7 @@ jobs:
             --results "$STATE/results" ${{ inputs.rebuild && '--force' || '' }} \
             || echo "::warning::some checkers did not build; they are not measured"
 
-      # Lean's own kernel, built for the runner from this commit's checkers/official: an invalid twin is
-      # staged only if it rejects it.
-      - name: Build the kernel that verifies invalid twins
-        run: |
-          rsync -a --delete checkers/official/ "$STATE/verifier/"
-          nix develop --command bash -c 'cd "$STATE/verifier" && lake build'
-
-      # A round is a calendar month. Its seed is drawn once, kept on the box (0600, the runner's), and
-      # published only when the round is over; the manifest commits to it by its sha256.
-      - name: The round and its seed
-        run: |
-          round="$(date -u +%Y-%m)"
-          echo "ROUND=$round" >> "$GITHUB_ENV"
-          install -d -m 0700 "$STATE/rounds/$round"
-          if [ ! -s "$STATE/rounds/$round/seed" ]; then
-            (umask 077 && od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$STATE/rounds/$round/seed")
-          fi
-
-      - name: Stage the round's inputs
-        run: |
-          curl -fsSL -o "$STATE/published/results.json" https://arena.lean-lang.org/results.json
-          curl -fsSL -o "$STATE/published/lean-arena-tests.tar.gz" https://arena.lean-lang.org/lean-arena-tests.tar.gz
-          manifest="$STATE/rounds/$ROUND/manifest.json"
-          if [ -s "$manifest" ] && python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); r = json.load(open(sys.argv[2])); sys.exit(m["arena_revision"] != r["meta"]["git_revision"])' "$manifest" "$STATE/published/results.json"; then
-            echo "the round's inputs are staged for this arena revision"
-          else
-            nix develop --command python3 lka.py quiet-stage --published "$STATE/published" \
-              --source "$STATE/exports" --store "$STATE/tests" --manifest "$manifest" --allow-mismatch cedar \
-              --round-seed "$STATE/rounds/$ROUND/seed" --season "$SEASON" \
-              --verify-with "$STATE/verifier/.lake/build/bin/kernel"
-          fi
+      - uses: ./.github/actions/quiet-round
 
       - name: Quiet the machine
         run: sudo -n /usr/local/libexec/lka/lka-quiet on
@@ -145,85 +115,13 @@ jobs:
           retention-days: 30
           overwrite: true
 
-  tutorial:
-    name: Build tutorial page
-    if: vars.QUIET_BOARD == 'on' && github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Nix
-        uses: cachix/install-nix-action@v31
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build tutorial tests
-        run: ./lka.py build-test tutorial
-        shell: 'nix develop -c bash -euxo pipefail {0}'
-      - name: Build tutorial test viewer
-        run: |
-          cd test-printer
-          lake build
-          lake exe test-printer ../_build/tests/tutorial/ ../_out/tutorial/index.html
-        shell: 'nix develop -c bash -euxo pipefail {0}'
-      - uses: actions/upload-artifact@v4
-        with:
-          name: tutorial-page
-          path: _out/tutorial
-          overwrite: true
-
   publish:
     name: Publish
-    needs: [measure, tutorial]
+    needs: measure
     if: vars.QUIET_BOARD == 'on' && github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    uses: ./.github/workflows/quiet-publish.yml
     permissions:
       contents: write
       pages: write
       id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: quiet-board
-      - name: Dependencies
-        run: python3 -m pip install --quiet jinja2 jsonschema markdown pyyaml
-      - name: Check the board
-        run: |
-          python3 - <<'EOF'
-          import json
-          from lka_quiet.board import BOARD_SCHEMA
-          board = json.load(open("board.json"))
-          assert board["schema"] == BOARD_SCHEMA, board["schema"]
-          assert board["checkers"], "no checkers"
-          print(f"{board['epoch']}: {board['progress']['measured']}/{board['progress']['needed']} cells")
-          EOF
-      - name: Build the site
-        run: |
-          curl -fsSL -o official-results.json https://arena.lean-lang.org/results.json
-          python3 lka.py build-site --outdir _out --results official-results.json --board board.json \
-            --machine "$MACHINE" --quiet-home
-      - uses: actions/download-artifact@v4
-        with:
-          name: tutorial-page
-          path: _out/tutorial
-      - name: Publish the raw runs
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          epoch="$(python3 -c 'import json; print(json.load(open("board.json"))["epoch"])')"
-          gh release view "quiet-$epoch" >/dev/null 2>&1 || \
-            gh release create "quiet-$epoch" --title "Quiet board runs, epoch $epoch" \
-              --notes "Every run record of machine epoch $epoch. Re-score with lka.py quiet-score."
-          shopt -s nullglob
-          seeds=(revealed/*.txt)
-          gh release upload "quiet-$epoch" quiet-results.tar.xz board.json "${seeds[@]}" --clobber
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          name: github-pages-${{ github.run_attempt }}
-          path: _out
-      - id: deploy
-        uses: actions/deploy-pages@v4
-        with:
-          artifact_name: github-pages-${{ github.run_attempt }}
+    secrets: inherit

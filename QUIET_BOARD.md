@@ -45,7 +45,10 @@ The full method, with every rule typeset, is the site's methodology page
 | `scoring/` | One file per season: metrics, families, categories, statistics. |
 | `templates/quiet/`, `templates/static/quiet.*` | The board's pages, stylesheet (light and dark) and its one small script. |
 | `tests_lka/` | The unit tests, and `mutants.py`, which checks that each promise above has a test that fails without it. |
-| `.github/workflows/quiet-board.yml` | Build, measure and score on the box; publish from GitHub. |
+| `.github/workflows/quiet-board.yml` | The board, triggered as the Arena's own site is: build, measure and score on the box; publish (`quiet-publish.yml`). |
+| `.github/workflows/quiet-import.yml` | The first import, by hand: every kernel built and run once, one at a time, then ranked. |
+| `.github/workflows/quiet-pr.yml` | A pull request's checkers measured on the box, once approved, and reported on the PR. |
+| `.github/actions/quiet-round` | A round's seed and inputs, and the kernel that verifies its twins. |
 
 ## Checking it, without a quiet box
 
@@ -75,15 +78,22 @@ nix develop --command quietbox/preview-live.sh
 6. Put a fine-grained token for the repository (Administration: read and write) in
    `/etc/lka/github-token` (mode 0600, root), and `systemctl enable --now lka-runner`.
 7. In the repository: set the variable `QUIET_BOARD` to `on`, enable Pages from GitHub Actions,
-   require approval for workflows from outside collaborators, and disable `build-and-deploy.yml`
-   (it deploys the official Arena's Pages).
-8. Run the **Quiet board setup** workflow once: it merges every checker and test from
-   leanprover/lean-kernel-arena, rebuilds every checker on the box and starts measuring.
+   require approval for workflows from outside collaborators, disable `build-and-deploy.yml` (it
+   deploys the official Arena's Pages), and create the environment `quiet-box` with yourself as a
+   required reviewer: no pull request's checker reaches the box until you approve its run.
+8. Run the **Quiet board import** workflow once: it merges every checker and test from
+   leanprover/lean-kernel-arena, then on the box builds each kernel from scratch and runs it once on
+   every test, one kernel at a time (each one's verdicts and first timings show up as its own job),
+   then ranks them all in interleaved passes until every cell is measured enough, and publishes.
 
 From then on the board triggers as the arena's own site does: a push to `master` builds, measures,
 scores and deploys (with the quiet board as the home page and the official board at `arena.html`);
-a pull request is checked on GitHub's runners and never reaches the box; a manual run can rebuild
-every checker. The nightly sync merges upstream and starts the board when something new landed, and
+a manual run can rebuild every checker. A pull request is checked on GitHub's runners, and once you
+approve it in the `quiet-box` environment, the checkers it adds or changes are built on the box as
+`pr<N>-<name>` (their own users, homes and records, so they never stand in for the board's), measured
+on the round's inputs beside every checker, and their places reported on the pull request. That
+workflow and all of the board's code always come from `master`; the pull request is only read, and
+its checkers run only in the sandbox. When it closes, its checkers' users and homes are removed. The nightly sync merges upstream and starts the board when something new landed, and
 a nightly run continues a round that one job could not finish.
 
 Any change to the machine (kernel, firmware, microcode, the clock, the helper) is a new epoch:

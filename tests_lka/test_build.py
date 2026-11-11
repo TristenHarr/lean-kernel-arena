@@ -2,7 +2,8 @@
 
 import unittest
 
-from lka_quiet.build import CHECKER_GROUP, BuildError, build_plan, nft_ruleset, validate_build_request
+from lka_quiet.build import (CHECKER_GROUP, BuildError, build_plan, nft_ruleset, removal_plan, validate_build_request,
+                             validate_removal)
 
 MACHINE = {
     "memory": {"max_bytes": 16106127360, "pids_max": 32768},
@@ -29,6 +30,35 @@ class Requests(unittest.TestCase):
     def test_the_arena_tree_is_the_staged_one(self):
         with self.assertRaises(BuildError):
             validate_build_request(request(arena="/home/someone/arena"), MACHINE)
+
+
+class PullRequests(unittest.TestCase):
+    """A pull request's checker is pr<N>-<name>: its own user, home and tree, so it can never stand in
+    for the board's build of the same checker."""
+
+    def test_a_pr_checker_builds_from_its_own_pr_tree(self):
+        validate_build_request(request(checker="pr12-nano-lean", arena="/srv/lka/pr/12/arena"), MACHINE)
+
+    def test_never_from_another_pr_or_the_boards(self):
+        for arena in ("/srv/lka/pr/13/arena", "/srv/lka/arena", "/srv/lka/pr/12/arena/../../13/arena"):
+            with self.subTest(arena=arena), self.assertRaises(BuildError):
+                validate_build_request(request(checker="pr12-nano-lean", arena=arena), MACHINE)
+
+    def test_a_board_checker_never_builds_from_a_pr_tree(self):
+        with self.assertRaises(BuildError):
+            validate_build_request(request(checker="nano-lean", arena="/srv/lka/pr/12/arena"), MACHINE)
+
+    def test_only_a_pr_checker_can_be_removed(self):
+        validate_removal("pr7-kefir")
+        for name in ("kefir", "pr-kefir", "pr7-", "pr07-kefir", "pr7-../x", "pr7-a b"):
+            with self.subTest(name=name), self.assertRaises(BuildError):
+                validate_removal(name)
+
+    def test_removal_takes_the_user_and_the_home(self):
+        argv = [step["argv"] for step in removal_plan("pr7-kefir", MACHINE, user="lkc-0123456789ab")]
+        self.assertEqual(argv, [["pkill", "-KILL", "-u", "lkc-0123456789ab"],
+                                ["userdel", "lkc-0123456789ab"],
+                                ["rm", "-rf", "--one-file-system", "--", "/srv/lka/checkers/pr7-kefir"]])
 
 
 class Plan(unittest.TestCase):

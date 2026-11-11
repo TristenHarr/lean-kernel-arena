@@ -195,6 +195,19 @@ class Sessions(unittest.TestCase):
             seqs = [r["seq"] for r in store.records()]
             self.assertEqual(seqs, sorted(set(seqs)))
 
+    def test_a_pass_limit_measures_every_pending_cell_once_and_stops(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sess, store = session(tmp)
+            summary = sess.run(budget_s=1e9, max_passes=1)
+            self.assertEqual(summary["outcome"], "passes")
+            cells = [(c["checker"], c["test"], c["lane"]) for c in sess.measure.calls]
+            self.assertEqual(len(cells), len(set(cells)))
+            self.assertEqual({c["pass"] for c in sess.measure.calls}, {0})
+            self.assertGreater(summary["pending"], 0)
+            sess2, _ = session(tmp)
+            self.assertEqual(sess2.run(budget_s=1e9)["outcome"], "complete")
+            self.assertEqual(min(c["pass"] for c in sess2.measure.calls), 1)
+
     def test_invalid_runs_are_repeated(self):
         with tempfile.TemporaryDirectory() as tmp:
             clock = Clock()

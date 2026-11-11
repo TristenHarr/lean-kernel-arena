@@ -193,10 +193,13 @@ def run_env(environ) -> dict:
     return out
 
 
-def score_store(store: RunStore, tests, checkers, scoring: dict, machine: dict) -> dict:
+def score_store(store: RunStore, tests, checkers, scoring: dict, machine: dict, extra=()) -> dict:
+    """The board from a store's runs, and those of `extra` stores of the same epoch (a pull request's
+    checkers, measured on their own beside the board)."""
     hashes = {c["name"]: c["source_hash"] for c in checkers}
     shas = {t["name"]: t["sha256"] for t in tests}
-    current = current_records(store.records(), hashes, shas)
+    runs = list(store.records()) + [r for other in extra for r in other.records()]
+    current = current_records(runs, hashes, shas)
     records = [r for cell_records in current.values() for r in cell_records]
     board = score_board(tests, [{"name": c["name"]} for c in checkers], records, scoring)
     board["machine"] = machine
@@ -345,9 +348,9 @@ def cmd_quiet_measure(args, lka) -> int:
                              {c["name"]: c for c in all_checkers}, measure, env, epoch, args.round)
     session = Session(store=store, checkers=checkers, tests=tests, machine=machine, round_id=args.round, env=env,
                       measure=measure, sentinel=sentinel, log=lambda m: print(time.strftime("%H:%M:%S"), m, flush=True))
-    summary = session.run(budget_s=args.budget_hours * 3600)
+    summary = session.run(budget_s=args.budget_hours * 3600, max_passes=args.passes)
     print(json.dumps(summary))
-    return 0 if summary["outcome"] in ("complete", "budget") else 3
+    return 0 if summary["outcome"] in ("complete", "budget", "passes") else 3
 
 
 def _builds_dir(results: Path, epoch: str) -> Path:
@@ -408,7 +411,8 @@ def cmd_quiet_score(args, lka) -> int:
     manifest = read_manifest(Path(args.manifest))
     tests = manifest["tests"]
     checkers = _checkers(lka, None)
-    board = score_store(RunStore(Path(args.results), epoch=epoch), tests, checkers, scoring, machine)
+    extra = [RunStore(Path(d), epoch=epoch) for d in args.extra_results or []]
+    board = score_store(RunStore(Path(args.results), epoch=epoch), tests, checkers, scoring, machine, extra=extra)
     board["tests"] = public_tests(tests)
     if manifest.get("seed_sha256"):
         board["round_inputs"] = {"seed_sha256": manifest["seed_sha256"],
@@ -422,6 +426,30 @@ def cmd_quiet_score(args, lka) -> int:
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(board, indent=1, sort_keys=True) + "\n")
     print(f"scored {len(board['checkers'])} checkers, {board['progress']['measured']}/{board['progress']['needed']} cells")
+    return 0
+
+
+def cmd_quiet_pr_stage(args, lka) -> int:
+    import jsonschema
+    from .pr import PRError, stage_pr_arena
+    schema = lka.load_schema("checker")
+    try:
+        names = stage_pr_arena(Path(args.base), Path(args.head), args.number, Path(args.out),
+                               validate=lambda data, path: jsonschema.validate(data, schema))
+    except PRError as error:
+        print(error, file=sys.stderr)
+        return 1
+    Path(args.names_file).write_text("".join(f"{n}\n" for n in names))
+    print(f"staged {len(names)} checker(s) of pull request {args.number}: {', '.join(names) or 'none'}")
+    return 0
+
+
+def cmd_quiet_pr_report(args, lka) -> int:
+    import fnmatch
+    from .pr import pr_report
+    board = json.loads(Path(args.board).read_text())
+    names = [c["name"] for c in board["checkers"] if fnmatch.fnmatchcase(c["name"], args.checkers)]
+    sys.stdout.write(pr_report(board, names, machine=args.machine_name))
     return 0
 
 
@@ -457,6 +485,7 @@ def add_parsers(subparsers) -> None:
     measure.add_argument("--checker", help="Glob of checkers to measure (default: all)")
     measure.add_argument("--test", nargs="+", help="Globs of tests to measure (default: all staged)")
     measure.add_argument("--budget-hours", type=float, default=20.0)
+    measure.add_argument("--passes", type=int, help="Stop after this many passes (each pending cell once per pass)")
     measure.add_argument("--helper", default="sudo -n /usr/local/libexec/lka/lka-measure",
                          help="Command that measures one request (JSON on stdin)")
     measure.add_argument("--calibrating", action="store_true", help="Measure before the machine is calibrated")
@@ -471,15 +500,29 @@ def add_parsers(subparsers) -> None:
     build.add_argument("--force", action="store_true", help="Rebuild even if this source built already")
     build.add_argument("--helper", default="sudo -n /usr/local/libexec/lka/lka-measure")
 
+    pr_stage = subparsers.add_parser("quiet-pr-stage", help="Stage a pull request's checkers beside master's")
+    pr_stage.add_argument("--base", required=True, help="master's tree (the board's code comes from here alone)")
+    pr_stage.add_argument("--head", required=True, help="The pull request's head, read as data")
+    pr_stage.add_argument("--number", required=True, type=int, help="The pull request's number")
+    pr_stage.add_argument("--out", required=True, help="Where to stage the tree, state/pr/<number>/arena")
+    pr_stage.add_argument("--names-file", required=True, help="File to list the staged checkers' names in")
+
+    pr_report = subparsers.add_parser("quiet-pr-report", help="The pull request comment from a scored board")
+    pr_report.add_argument("--board", required=True)
+    pr_report.add_argument("--checkers", required=True, help="Glob of the PR's checkers, pr<N>-*")
+    pr_report.add_argument("--machine-name", default="quiet box")
+
     score = subparsers.add_parser("quiet-score", help="Score a quiet-board results store into board.json")
     score.add_argument("--season", required=True, help="Scoring rules (scoring/*.yaml)")
     score.add_argument("--machine", required=True, help="Machine profile (machines/*.yaml)")
     score.add_argument("--manifest", required=True)
     score.add_argument("--results", required=True)
+    score.add_argument("--extra-results", action="append", metavar="DIR",
+                       help="Another results store of the same epoch (a pull request's) to score beside it")
     score.add_argument("--epoch-file")
     score.add_argument("--epoch")
     score.add_argument("--out", default="_build/board.json")
 
 
 COMMANDS = {"quiet-stage": cmd_quiet_stage, "quiet-build": cmd_quiet_build, "quiet-measure": cmd_quiet_measure,
-            "quiet-score": cmd_quiet_score}
+            "quiet-score": cmd_quiet_score, "quiet-pr-stage": cmd_quiet_pr_stage, "quiet-pr-report": cmd_quiet_pr_report}

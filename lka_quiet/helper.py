@@ -394,7 +394,8 @@ def measure_inside_scope(req: dict, machine: dict, scope: Path | None = None) ->
 
 
 def main(argv: list[str]) -> int:
-    """`lka-measure [--no-systemd]`: one request on stdin, one run record on stdout.
+    """`lka-measure [--no-systemd]`: one request on stdin, one run record on stdout; `--build` builds a
+    checker and `--remove` removes a pull request's checker (see build.py).
 
     Under systemd it re-runs itself inside a fresh delegated scope in lka.slice; with
     --no-systemd it makes its own cgroup subtree instead."""
@@ -402,6 +403,15 @@ def main(argv: list[str]) -> int:
         print("lka-measure must run as root", file=sys.stderr)
         return 2
     machine_path = os.environ.get("LKA_MACHINE", "/etc/lka/machine.json")
+    if "--remove" in argv:
+        from .build import BuildError, remove_checker
+        try:
+            record = remove_checker(json.loads(sys.stdin.read()), json.loads(Path(machine_path).read_text()))
+        except (BuildError, json.JSONDecodeError, KeyError) as error:
+            print(f"lka-measure --remove: {error}", file=sys.stderr)
+            return 2
+        sys.stdout.write(json.dumps(record, sort_keys=True) + "\n")
+        return 0 if record["ok"] else 1
     if "--build" in argv:
         from .build import BuildError, run_build
         try:

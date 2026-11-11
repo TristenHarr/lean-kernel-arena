@@ -368,6 +368,24 @@ class Scoring(unittest.TestCase):
             self.assertAlmostEqual(fast["categories"]["overall"]["factor"], 2.0, places=2)
             self.assertEqual(first["machine"], {"name": "box"})
 
+    def test_a_prs_runs_score_beside_the_boards(self):
+        from tests_lka.test_board import SCORING, TESTS, checker_runs
+        with tempfile.TemporaryDirectory() as tmp:
+            board_store = RunStore(Path(tmp) / "board", epoch="e1")
+            pr_store = RunStore(Path(tmp) / "pr", epoch="e1")
+            for record in checker_runs("official") + checker_runs("fast", scale=0.5):
+                board_store.append({**record, "checker_hash": f"h-{record['checker']}", "test_sha256": f"s-{record['test']}"})
+            for record in checker_runs("pr4-new", scale=0.25):
+                pr_store.append({**record, "checker_hash": "h-pr4-new", "test_sha256": f"s-{record['test']}"})
+            tests = [{**t, "sha256": f"s-{t['name']}"} for t in TESTS]
+            checkers = [{"name": n, "source_hash": f"h-{n}"} for n in ("official", "fast", "pr4-new")]
+            board = score_store(board_store, tests, checkers, SCORING, machine={"name": "box"}, extra=[pr_store])
+            new = next(c for c in board["checkers"] if c["name"] == "pr4-new")
+            self.assertEqual(new["categories"]["multi-core"]["place"], 1)
+            self.assertAlmostEqual(new["categories"]["multi-core"]["factor"], 4.0, places=2)
+            alone = score_store(board_store, tests, checkers, SCORING, machine={"name": "box"})
+            self.assertIsNone(next(c for c in alone["checkers"] if c["name"] == "pr4-new")["categories"]["overall"]["score"])
+
     def test_stale_revisions_do_not_score(self):
         from tests_lka.test_board import SCORING, TESTS, checker_runs
         with tempfile.TemporaryDirectory() as tmp:

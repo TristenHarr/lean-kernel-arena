@@ -1,0 +1,166 @@
+# The first import, run by hand: every checker and test of leanprover/lean-kernel-arena merged into the
+# fork; then, on the quiet box, one job per kernel, one at a time: built from scratch and run once on
+# every test, so each kernel's verdicts and first timings arrive kernel by kernel; then the ranking:
+# interleaved passes over every kernel until each cell is measured enough to rank it, so that slow drift
+# (heat, the day) falls on no kernel more than another. A ranking longer than one job continues in the
+# board's nightly run. Then the board is published.
+name: Quiet board import
+
+on:
+  workflow_dispatch:
+    inputs:
+      checkers:
+        description: Glob of the checkers to import
+        default: "*"
+      rank_hours:
+        description: Hours of ranking in this run (the nightly run continues it)
+        default: "20"
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: quiet-import
+  cancel-in-progress: false
+
+env:
+  MACHINE: machines/n100-quiet.yaml
+  SEASON: scoring/season-1.yaml
+  STATE: /srv/lka
+
+jobs:
+  not-enabled:
+    name: The quiet board is not switched on
+    if: vars.QUIET_BOARD != 'on'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::error::set the repository variable QUIET_BOARD to on (Settings, Secrets and variables, Actions, Variables) once the quiet box's runner is up"
+          exit 1
+
+  import:
+    name: Import every checker and test
+    if: vars.QUIET_BOARD == 'on'
+    runs-on: ubuntu-latest
+    outputs:
+      checkers: ${{ steps.list.outputs.checkers }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+      - name: Merge every upstream checker and test
+        run: |
+          git config user.name "quiet-board import"
+          git config user.email "quiet-board-import@users.noreply.github.com"
+          git remote add upstream https://github.com/leanprover/lean-kernel-arena.git
+          git fetch upstream master
+          git merge --no-edit upstream/master || { git merge --abort; echo "::error::upstream does not merge cleanly; resolve by hand"; exit 1; }
+          git push origin HEAD:master
+      - name: Dependencies
+        run: python3 -m pip install --quiet jinja2 jsonschema markdown pyyaml
+      - id: list
+        name: The kernels to import
+        env:
+          PATTERN: ${{ inputs.checkers }}
+        run: |
+          checkers="$(python3 lka.py list-checkers --json | python3 -c 'import fnmatch, json, os, sys; print(json.dumps([n for n in json.load(sys.stdin) if fnmatch.fnmatchcase(n, os.environ["PATTERN"])]))')"
+          echo "checkers=$checkers" >> "$GITHUB_OUTPUT"
+          echo "### Importing" >> "$GITHUB_STEP_SUMMARY"
+          python3 -c 'import json, sys; print("\n".join(f"- {n}" for n in json.loads(sys.argv[1])))' "$checkers" >> "$GITHUB_STEP_SUMMARY"
+
+  kernel:
+    name: Import ${{ matrix.checker }}
+    needs: import
+    if: needs.import.outputs.checkers != '[]'
+    runs-on: [self-hosted, linux, x64, lka-n100-quiet]
+    timeout-minutes: 1440
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        checker: ${{ fromJSON(needs.import.outputs.checkers) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+      - name: Stage the arena tree the checkers build from
+        run: rsync -a --delete --exclude=.git --exclude=_build --exclude=_out --exclude=_results ./ "$STATE/arena/"
+      - name: Build ${{ matrix.checker }} from scratch
+        run: nix develop --command python3 lka.py quiet-build --checker "${{ matrix.checker }}" --results "$STATE/results" --force
+      - uses: ./.github/actions/quiet-round
+      - name: Quiet the machine
+        run: sudo -n /usr/local/libexec/lka/lka-quiet on
+      - name: Preflight
+        run: sudo -n /usr/local/libexec/lka/lka-preflight --check
+      - name: One pass of every test
+        run: |
+          nix develop --command python3 lka.py quiet-measure --machine "$MACHINE" --manifest "$STATE/rounds/$ROUND/manifest.json" \
+            --results "$STATE/results" --round "$ROUND" --checker "${{ matrix.checker }}" --passes 1 --budget-hours 22
+      - name: Leave the quiet state
+        if: always()
+        run: sudo -n /usr/local/libexec/lka/lka-quiet off
+      - name: Where it stands so far
+        if: always()
+        run: |
+          nix develop --command python3 lka.py quiet-score --season "$SEASON" --machine "$MACHINE" \
+            --manifest "$STATE/rounds/$ROUND/manifest.json" --results "$STATE/results" --epoch-file /etc/lka/epoch --out board.json
+          nix develop --command python3 lka.py quiet-pr-report --board board.json --checkers "${{ matrix.checker }}" \
+            --machine-name "N100 quiet box (one pass so far)" >> "$GITHUB_STEP_SUMMARY"
+
+  rank:
+    name: Rank every kernel
+    needs: [import, kernel]
+    if: always() && needs.import.result == 'success'
+    runs-on: [self-hosted, linux, x64, lka-n100-quiet]
+    timeout-minutes: 1440
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+      - name: Stage the arena tree the checkers build from
+        run: rsync -a --delete --exclude=.git --exclude=_build --exclude=_out --exclude=_results ./ "$STATE/arena/"
+      - uses: ./.github/actions/quiet-round
+      - name: Quiet the machine
+        run: sudo -n /usr/local/libexec/lka/lka-quiet on
+      - name: Preflight
+        run: sudo -n /usr/local/libexec/lka/lka-preflight --check
+      - name: Interleaved passes until every cell is measured enough
+        run: |
+          nix develop --command python3 lka.py quiet-measure --machine "$MACHINE" --manifest "$STATE/rounds/$ROUND/manifest.json" \
+            --results "$STATE/results" --round "$ROUND" --budget-hours "${{ inputs.rank_hours }}"
+      - name: Leave the quiet state
+        if: always()
+        run: sudo -n /usr/local/libexec/lka/lka-quiet off
+      - name: Score
+        run: |
+          nix develop --command python3 lka.py quiet-score --season "$SEASON" --machine "$MACHINE" \
+            --manifest "$STATE/rounds/$ROUND/manifest.json" --results "$STATE/results" --epoch-file /etc/lka/epoch --out board.json
+          tar -C "$STATE/results" -cJf quiet-results.tar.xz "$(cat /etc/lka/epoch)"
+      - name: Reveal the seeds of finished rounds
+        run: |
+          mkdir -p revealed
+          for dir in "$STATE"/rounds/*/; do
+            round="$(basename "$dir")"
+            if [ "$round" != "$ROUND" ] && [ -s "$dir/seed" ]; then cp "$dir/seed" "revealed/round-$round-seed.txt"; fi
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quiet-board
+          path: |
+            board.json
+            quiet-results.tar.xz
+            revealed/
+          retention-days: 30
+          overwrite: true
+
+  publish:
+    name: Publish
+    needs: rank
+    uses: ./.github/workflows/quiet-publish.yml
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    secrets: inherit

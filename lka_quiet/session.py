@@ -192,8 +192,11 @@ class Session:
         pending = pending_cells(self._cells(), current, self.expected, self.policy)
         return {"outcome": outcome, "runs": runs, "pending": len(pending)}
 
-    def run(self, budget_s: float) -> dict:
+    def run(self, budget_s: float, max_passes: int | None = None) -> dict:
+        """Passes until every cell is measured enough ("complete"), the budget ends ("budget"), the
+        sentinel fails ("sentinel"), or `max_passes` passes are done ("passes")."""
         deadline = self.clock() + budget_s
+        done = 0
         self._record_declines()
         if self.sentinel is not None and not self._read_sentinel():
             return self._finish("sentinel", 0)
@@ -208,6 +211,8 @@ class Session:
             pending = pending_cells(self._cells(), current, self.expected, self.policy)
             if not pending:
                 return self._finish("complete", runs)
+            if max_passes is not None and done >= max_passes:
+                return self._finish("passes", runs)
             self.log(f"pass {pass_index}: {len(pending)} cells")
             for cell in plan_pass(pending, self.round_id, pass_index):
                 if self.clock() >= deadline:
@@ -222,3 +227,4 @@ class Session:
                 self.log(f"{record['checker']} {record['test']} {record['lane']}: {record['status']} "
                          f"{record.get('wall_s', 0):.3f} s{'' if record.get('valid') else ' (invalid)'}")
             pass_index += 1
+            done += 1

@@ -64,7 +64,7 @@ chmod 0644 /etc/lka/machine.json /etc/lka/nixpkgs-rev
 
 echo "== sudoers"
 cat > /etc/sudoers.d/lka.tmp <<EOF
-lka-runner ALL=(root) NOPASSWD: $libexec/lka-measure, $libexec/lka-measure --build, $libexec/lka-quiet on, $libexec/lka-quiet off, $libexec/lka-quiet status, $libexec/lka-preflight --check
+lka-runner ALL=(root) NOPASSWD: $libexec/lka-measure, $libexec/lka-measure --build, $libexec/lka-measure --remove, $libexec/lka-quiet on, $libexec/lka-quiet off, $libexec/lka-quiet status, $libexec/lka-preflight --check
 EOF
 visudo -cf /etc/sudoers.d/lka.tmp
 mv /etc/sudoers.d/lka.tmp /etc/sudoers.d/lka

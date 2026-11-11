@@ -246,6 +246,19 @@ MUTANTS = [
     ("lka_quiet/cli.py", "        entry = {\"name\": test[\"name\"], \"outcome\": test.get(\"outcome\"), \"official_sha256\": test.get(\"official_sha256\")}",
      "        entry = {\"name\": test[\"name\"], \"outcome\": test.get(\"outcome\"), \"official_sha256\": test.get(\"official_sha256\"), \"sha256\": test.get(\"sha256\")}",
      "a board never publishes the sha256 of the bytes measured"),
+    ("lka_quiet/build.py", "    if os.path.normpath(str(req.get(\"arena\", \"\"))) != staged:\n", "    if False:\n",
+     "a checker builds only from its own staged tree, a pull request's from that pull request's"),
+    ("lka_quiet/build.py", "    if not isinstance(name, str) or not _PR_NAME.match(name) or \"..\" in name or \"/\" in name:",
+     "    if not isinstance(name, str) or not _NAME.match(name) or \"..\" in name or \"/\" in name:",
+     "only a pull request's checker is ever removed"),
+    ("lka_quiet/pr.py", "    shutil.copytree(base, out, symlinks=True, ignore=_LEFT_BEHIND)",
+     "    shutil.copytree(head, out, symlinks=True, ignore=_LEFT_BEHIND)", "a pull request never brings the board's code"),
+    ("lka_quiet/pr.py", "                  if name not in before or not _same(base, head, before[name], files))",
+     "                  if name not in before)", "a changed checker is measured, not only a new one"),
+    ("lka_quiet/session.py", "            if max_passes is not None and done >= max_passes:\n", "            if False:\n",
+     "a session stops after the passes asked for"),
+    ("lka_quiet/cli.py", "    runs = list(store.records()) + [r for other in extra for r in other.records()]",
+     "    runs = list(store.records())", "a pull request's runs are scored beside the board's"),
 ]
 
 

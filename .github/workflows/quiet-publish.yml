@@ -1,0 +1,98 @@
+# Publishing a scored round, for the board's own workflow and the importer: the tutorial page, the site
+# (the quiet board at the root, the official board at arena.html), the raw runs and the seeds of finished
+# rounds as release assets, and GitHub Pages. Called after a job on the quiet box uploaded the artifact
+# quiet-board (board.json, quiet-results.tar.xz, revealed/).
+name: Quiet board publish
+
+on:
+  workflow_call:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+env:
+  MACHINE: machines/n100-quiet.yaml
+
+jobs:
+  tutorial:
+    name: Build tutorial page
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build tutorial tests
+        run: ./lka.py build-test tutorial
+        shell: 'nix develop -c bash -euxo pipefail {0}'
+      - name: Build tutorial test viewer
+        run: |
+          cd test-printer
+          lake build
+          lake exe test-printer ../_build/tests/tutorial/ ../_out/tutorial/index.html
+        shell: 'nix develop -c bash -euxo pipefail {0}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tutorial-page
+          path: _out/tutorial
+          overwrite: true
+
+  publish:
+    name: Publish
+    needs: tutorial
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: quiet-board
+      - name: Dependencies
+        run: python3 -m pip install --quiet jinja2 jsonschema markdown pyyaml
+      - name: Check the board
+        run: |
+          python3 - <<'EOF'
+          import json
+          from lka_quiet.board import BOARD_SCHEMA
+          board = json.load(open("board.json"))
+          assert board["schema"] == BOARD_SCHEMA, board["schema"]
+          assert board["checkers"], "no checkers"
+          print(f"{board['epoch']}: {board['progress']['measured']}/{board['progress']['needed']} cells")
+          EOF
+      - name: Build the site
+        run: |
+          curl -fsSL -o official-results.json https://arena.lean-lang.org/results.json
+          python3 lka.py build-site --outdir _out --results official-results.json --board board.json \
+            --machine "$MACHINE" --quiet-home
+      - uses: actions/download-artifact@v4
+        with:
+          name: tutorial-page
+          path: _out/tutorial
+      - name: Publish the raw runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          epoch="$(python3 -c 'import json; print(json.load(open("board.json"))["epoch"])')"
+          gh release view "quiet-$epoch" >/dev/null 2>&1 || \
+            gh release create "quiet-$epoch" --title "Quiet board runs, epoch $epoch" \
+              --notes "Every run record of machine epoch $epoch. Re-score with lka.py quiet-score."
+          shopt -s nullglob
+          seeds=(revealed/*.txt)
+          gh release upload "quiet-$epoch" quiet-results.tar.xz board.json "${seeds[@]}" --clobber
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          name: github-pages-${{ github.run_attempt }}
+          path: _out
+      - id: deploy
+        uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}
