@@ -11,6 +11,7 @@ out-of-memory and fork cases trip quickly. Exit status: the number of failed cas
 """
 
 import argparse
+import grp
 import hashlib
 import json
 import os
@@ -54,7 +55,8 @@ def base_machine() -> dict:
         "memory": {"max_bytes": 16106127360, "pids_max": 32768},
         "interference": {"max_fraction": 0.005, "floor_ms": 20, "jiffy_ms": 10},
         "energy": {"rapl_domain": rapl if os.access(f"{rapl}/energy_uj", os.R_OK) else None},
-        "sandbox": {"user_prefix": "lkc-", "homes": str(STATE / "checkers"), "tmp_bytes": 268435456},
+        "sandbox": {"user_prefix": "lkc-", "homes": str(STATE / "checkers"), "tmp_bytes": 268435456,
+                    "input_group": "lka-input"},
         "paths": {"state": str(STATE), "tests": str(STATE / "tests"), "checkers": str(STATE / "checkers"),
                   "results": str(STATE / "results"), "acct": "/var/log/lka/pacct",
                   "helper": "/usr/local/libexec/lka/lka-measure", "shim": "/usr/local/libexec/lka/lka-shim"},
@@ -88,10 +90,20 @@ def setup() -> None:
     for path in [home, *home.rglob("*")]:
         os.chown(path, account.pw_uid, account.pw_gid)
     home.chmod(0o750)
+    group = machine["sandbox"]["input_group"]
+    try:
+        grp.getgrnam(group)
+    except KeyError:
+        subprocess.run(["groupadd", "--system", group], check=True)
+    gid = grp.getgrnam(group).gr_gid
     tests = Path(machine["paths"]["tests"])
     tests.mkdir(parents=True, exist_ok=True)
-    (tests / "selftest.ndjson").write_text('{"meta": "selftest"}\n')
-    (tests / "selftest.ndjson").chmod(0o644)
+    os.chown(tests, 0, gid)
+    tests.chmod(0o2750)
+    for name, text in (("selftest.ndjson", '{"meta": "selftest"}\n'), ("other.ndjson", '{"meta": "another input"}\n')):
+        (tests / name).write_text(text)
+        os.chown(tests / name, 0, gid)
+        (tests / name).chmod(0o640)
     acct = Path(machine["paths"]["acct"])
     acct.parent.mkdir(parents=True, exist_ok=True)
     acct.touch(mode=0o600, exist_ok=True)
@@ -145,6 +157,14 @@ def cases(env_bytes: int):
          status("accepted")),
         ("the staged tests are read-only", "touch \"$(dirname \"$IN\")/written\" 2>/dev/null && exit 0 || exit 1",
          "4core", 30, "reject", status("rejected")),
+        ("the run reads its own input", "test \"$(cat \"$IN\")\" = '{\"meta\": \"selftest\"}'", "4core", 30, "accept",
+         status("accepted")),
+        ("no other staged input is visible", "test -e \"$(dirname \"$IN\")/other.ndjson\" && exit 0 || exit 1",
+         "4core", 30, "reject", status("rejected")),
+        ("the store shows the run's input alone", "test \"$(ls -A \"$(dirname \"$IN\")\")\" = selftest.ndjson", "4core", 30,
+         "accept", status("accepted")),
+        ("the input is read-only", "echo x >> \"$IN\" 2>/dev/null && exit 0 || exit 1", "4core", 30, "reject",
+         status("rejected")),
         ("system paths are read-only", "touch /etc/lka-written 2>/dev/null && exit 0 || exit 1", "4core", 30,
          "reject", status("rejected")),
         ("home is writable", "echo hi > \"$HOME/marker\"", "4core", 30, "accept", status("accepted")),
@@ -200,6 +220,15 @@ def main() -> int:
                 problem = f"{type(error).__name__}: {error}"
             failures += problem is not None
             print(f"{'ok  ' if problem is None else 'FAIL'} {name}" + (f": {problem}" if problem else ""))
+
+        machine = selftest_machine()
+        user = user_name(machine["sandbox"]["user_prefix"])
+        staged = Path(machine["paths"]["tests"]) / "selftest.ndjson"
+        outside = subprocess.run(["setpriv", f"--reuid={user}", f"--regid={user}", "--init-groups", "--",
+                                  "cat", str(staged)], capture_output=True)
+        ok = outside.returncode != 0
+        failures += not ok
+        print(f"{'ok  ' if ok else 'FAIL'} a checker's user cannot read a staged input outside a run")
 
         loop = [run(machine_path, helper, "$HOME/bin/loop", "1core") for _ in range(5)]
         counts = [r["counters"]["instructions_u"] for r in loop]

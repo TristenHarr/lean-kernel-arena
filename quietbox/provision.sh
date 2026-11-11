@@ -36,8 +36,16 @@ systemctl restart nix-daemon
 
 echo "== accounts and state"
 getent group lka-checkers >/dev/null || groupadd --system lka-checkers
+input_group="$(python3 -c 'import json, sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["sandbox"]["input_group"])' "$machine_yaml")"
+getent group "$input_group" >/dev/null || groupadd --system "$input_group"
 id lka-runner >/dev/null 2>&1 || useradd --system --create-home --home-dir "$state/runner" --shell /bin/bash lka-runner
-install -d -o root -g root -m 0755 "$state" "$state/checkers" "$state/tests" "$state/run"
+install -d -o root -g root -m 0755 "$state" "$state/checkers" "$state/run"
+# The staged inputs: written by the runner, readable by the input group alone (a measured run is
+# given it, a build never is); new files and shards inherit the group.
+install -d -o lka-runner -g "$input_group" -m 2750 "$state/tests"
+chgrp -R "$input_group" "$state/tests"
+find "$state/tests" -mindepth 1 -type d -exec chmod 2750 {} +
+find "$state/tests" -type f -exec chmod 0640 {} +
 install -d -o lka-runner -g lka-runner -m 0755 "$state/results" "$state/arena" "$state/published" "$state/exports"
 install -d -o root -g root -m 0700 /etc/lka
 

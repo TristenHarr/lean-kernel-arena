@@ -66,13 +66,17 @@ def _tarball_members(tarball: Path | None) -> dict[str, bytes]:
 
 
 def _put(store: Path, sha: str, write) -> Path:
+    """File `sha` in the store. Inputs are readable by the store's group alone (lka-input, which a
+    measured run is given and a build never is), so no checker can read a round's inputs, its
+    re-encodings or its twins, outside the one run each is measured in."""
     target = store / sha[:2] / f"{sha}.ndjson"
     if not target.exists():
         target.parent.mkdir(parents=True, exist_ok=True)
+        target.parent.chmod(0o750)
         tmp = target.with_suffix(".tmp")
         write(tmp)
         os.replace(tmp, target)
-        target.chmod(0o644)
+        target.chmod(0o640)
     return target
 
 

@@ -14,6 +14,7 @@ interrupts, and the process-accounting file; afterwards the run cgroup's peak me
 and CPU use. `lka_quiet.record.build_record` turns those into the run record printed on stdout.
 """
 
+import grp
 import hashlib
 import json
 import os
@@ -115,10 +116,16 @@ def perf_command(out: str, ctl: str, ack: str) -> list[str]:
             "-e", ",".join(EVENTS), "--"]
 
 
-def shim_command(shim, *, cgroup, uid, gid, workdir, env_path, tmp_bytes, overlay, ctl, ack, status, run) -> list[str]:
+def shim_command(shim, *, cgroup, uid, gid, workdir, env_path, tmp_bytes, overlay, ctl, ack, status, run,
+                 input=None, input_gid=None, hide=None) -> list[str]:
+    """The shim's command line; with `input`, `input_gid` and `hide` (the shim refuses to run
+    without them) the run sees the staged inputs under `hide` as `input` alone."""
+    isolation = []
+    if input is not None:
+        isolation = ["--input", input, "--input-gid", str(input_gid), "--hide", hide]
     return [shim, "--cgroup", str(cgroup), "--uid", str(uid), "--gid", str(gid), "--workdir", workdir,
             "--env", env_path, "--tmp-bytes", str(tmp_bytes), "--overlay", overlay,
-            "--ctl", ctl, "--ack", ack, "--status", status, "--", "/bin/sh", "-c", run]
+            "--ctl", ctl, "--ack", ack, "--status", status, *isolation, "--", "/bin/sh", "-c", run]
 
 
 def cpu_list(cpus) -> str:
@@ -255,6 +262,18 @@ def leave_private_cgroup(scope: Path) -> None:
     scope.rmdir()
 
 
+def measured_command(req: dict, machine: dict, *, uid: int, gid: int, input_gid: int, run_cg: Path,
+                     run_dir: Path) -> list[str]:
+    """perf, counting under control, around the shim around the checker's command: the run in its
+    cgroup as the checker's user, its home behind an overlay, and its own input alone in view."""
+    return perf_command(str(run_dir / "perf.json"), str(run_dir / "ctl"), str(run_dir / "ack")) + shim_command(
+        machine["paths"]["shim"], cgroup=run_cg, uid=uid, gid=gid, workdir=req["workdir"],
+        env_path=str(run_dir / "env"), tmp_bytes=machine["sandbox"]["tmp_bytes"],
+        overlay=checker_home(req["checker"], machine), ctl=str(run_dir / "ctl"), ack=str(run_dir / "ack"),
+        status=str(run_dir / "status.json"), run=req["cmd"], input=req["input"], input_gid=input_gid,
+        hide=machine["paths"]["tests"])
+
+
 def measure_inside_scope(req: dict, machine: dict, scope: Path | None = None) -> dict:
     """Run one measurement; this process is alone in `scope`, a cgroup delegated to it."""
     import pwd
@@ -286,11 +305,9 @@ def measure_inside_scope(req: dict, machine: dict, scope: Path | None = None) ->
     acct_path = Path(machine["paths"]["acct"])
     acct_offset = acct_path.stat().st_size if acct_path.exists() else None
 
-    command = perf_command(str(perf_path), str(ctl), str(ack)) + shim_command(
-        machine["paths"]["shim"], cgroup=run_cg, uid=account.pw_uid, gid=account.pw_gid,
-        workdir=req["workdir"], env_path=str(env_path), tmp_bytes=machine["sandbox"]["tmp_bytes"],
-        overlay=checker_home(req["checker"], machine), ctl=str(ctl), ack=str(ack),
-        status=str(status_path), run=req["cmd"])
+    command = measured_command(req, machine, uid=account.pw_uid, gid=account.pw_gid,
+                               input_gid=grp.getgrnam(machine["sandbox"]["input_group"]).gr_gid,
+                               run_cg=run_cg, run_dir=run_dir)
 
     before = {
         "energy": _energy_uj(machine),

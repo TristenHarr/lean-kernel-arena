@@ -162,6 +162,36 @@ class Commands(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("--overlay") + 1], "/srv/lka/checkers/c")
 
 
+class InputIsolation(unittest.TestCase):
+    def test_the_shim_is_given_the_one_input_to_show_and_the_store_to_hide(self):
+        cmd = shim_command("/usr/local/libexec/lka/lka-shim", cgroup="/sys/fs/cgroup/x/run", uid=1500, gid=1500,
+                           workdir="/srv/lka/checkers/c/src", env_path="/run/lka/r/env", tmp_bytes=4096,
+                           overlay="/srv/lka/checkers/c", ctl="/run/lka/r/ctl", ack="/run/lka/r/ack",
+                           status="/run/lka/r/status.json", run="true", input="/srv/lka/tests/ab/abcdef.ndjson",
+                           input_gid=4242, hide="/srv/lka/tests")
+        self.assertEqual(cmd[cmd.index("--input") + 1], "/srv/lka/tests/ab/abcdef.ndjson")
+        self.assertEqual(cmd[cmd.index("--input-gid") + 1], "4242")
+        self.assertEqual(cmd[cmd.index("--hide") + 1], "/srv/lka/tests")
+        self.assertLess(cmd.index("--hide"), cmd.index("--"))
+
+    def test_every_measured_run_isolates_its_input(self):
+        from lka_quiet.helper import measured_command
+        machine = {**MACHINE, "paths": {**MACHINE["paths"], "shim": "/usr/local/libexec/lka/lka-shim"},
+                   "sandbox": {**MACHINE["sandbox"], "input_group": "lka-input"}}
+        cmd = measured_command(request(), machine, uid=1500, gid=1500, input_gid=4242,
+                               run_cg=Path("/sys/fs/cgroup/x/run"), run_dir=Path("/srv/lka/run/1"))
+        self.assertEqual(cmd[:2], ["perf", "stat"])
+        self.assertEqual(cmd[cmd.index("--input") + 1], request()["input"])
+        self.assertEqual(cmd[cmd.index("--input-gid") + 1], "4242")
+        self.assertEqual(cmd[cmd.index("--hide") + 1], "/srv/lka/tests")
+        self.assertEqual(cmd[cmd.index("--env") + 1], "/srv/lka/run/1/env")
+        self.assertEqual(cmd[-1], request()["cmd"])
+
+    def test_the_shim_refuses_a_run_without_them(self):
+        source = (Path(__file__).resolve().parent.parent / "quietbox" / "lka-shim.c").read_text()
+        self.assertIn("!input || !hide", source)
+
+
 class Cgroups(unittest.TestCase):
     def test_run_cgroup_limits(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -53,6 +53,12 @@ class Machines(unittest.TestCase):
         for path in MACHINES:
             self.assertEqual(load(path)["name"], path.stem)
 
+    def test_inputs_have_a_group_of_their_own(self):
+        from lka_quiet.build import CHECKER_GROUP
+        for path in MACHINES:
+            with self.subTest(machine=path.name):
+                self.assertNotEqual(load(path)["sandbox"]["input_group"], CHECKER_GROUP)
+
 
 class Seasons(unittest.TestCase):
     def test_there_is_a_season(self):

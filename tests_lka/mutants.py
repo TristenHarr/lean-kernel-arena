@@ -18,6 +18,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+SUITE_LIMIT_S = 600
 SKIP = shutil.ignore_patterns(".git", "_build", "_out", "_results", "__pycache__")
 
 # (file, original text, mutated text, the promise it breaks)
@@ -218,12 +219,31 @@ MUTANTS = [
      "a constructor's inductive follows its renumbering"),
     ("lka_quiet/encode.py", "            body.pop(_ID_KEY[k], None)\n", "",
      "a fingerprint does not depend on ids"),
+    ("lka_quiet/helper.py", "status=str(run_dir / \"status.json\"), run=req[\"cmd\"], input=req[\"input\"], input_gid=input_gid,",
+     "status=str(run_dir / \"status.json\"), run=req[\"cmd\"], input=None, input_gid=input_gid,",
+     "every measured run sees its own input alone"),
+    ("lka_quiet/cli.py", "        target.chmod(0o640)\n", "        target.chmod(0o644)\n",
+     "a staged input is readable by the input group alone"),
+    ("lka_quiet/twins.py", "        donors = [d.index for d in decls[:target.index]\n", "        donors = [d.index for d in decls\n",
+     "a donor is declared before its target"),
+    ("lka_quiet/twins.py", "and d.level_names == target.level_names\n", "\n",
+     "a donor has its target's universes"),
+    ("lka_quiet/twins.py", "                  and d.type_hash != target.type_hash and d.value_hash != target.value_hash]",
+     "                  and d.value_hash != target.value_hash]", "a donor's type is not its target's"),
+    ("lka_quiet/twins.py", "    for tried, (t, d) in enumerate(itertools.islice(order, max_tries), start=1):",
+     "    for tried, (t, d) in enumerate(order, start=1):", "a twin file tries at most max_tries candidates"),
+    ("lka_quiet/cli.py", "        if test.get(\"outcome\") != \"accept\" or not any(fnmatch.fnmatchcase(test[\"name\"], p) for p in twin_from):",
+     "        if not any(fnmatch.fnmatchcase(test[\"name\"], p) for p in twin_from):",
+     "only a test to be accepted is twinned"),
+    ("lka_quiet/cli.py", "\"seed_sha256\": hashlib.sha256(seed.encode()).hexdigest()", "\"seed_sha256\": seed",
+     "a round commits to its seed and never holds it"),
 ]
 
 
 def run_suite(snapshot: Path, mutant: tuple[str, str, str] | None) -> tuple[str, str]:
     """The suite on a copy of `snapshot` with `mutant` (file, original, mutated) applied:
-    ("pass" or "fail", its output), or ("broken", why) when the original text is not found once."""
+    ("pass" or "fail", its output), ("hung", why) when it does not finish in SUITE_LIMIT_S, or
+    ("broken", why) when the original text is not found once."""
     with tempfile.TemporaryDirectory(prefix="lka-mutant-") as tmp:
         copy = Path(tmp) / "tree"
         shutil.copytree(snapshot, copy)
@@ -234,10 +254,13 @@ def run_suite(snapshot: Path, mutant: tuple[str, str, str] | None) -> tuple[str,
             if source.count(original) != 1:
                 return "broken", f"the original text occurs {source.count(original)} times"
             target.write_text(source.replace(original, mutated))
-        result = subprocess.run(
-            [sys.executable, "-m", "unittest", "discover", "-s", "tests_lka", "-t", "."],
-            cwd=copy, capture_output=True, text=True, timeout=1200,
-        )
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "unittest", "discover", "-s", "tests_lka", "-t", "."],
+                cwd=copy, capture_output=True, text=True, timeout=SUITE_LIMIT_S,
+            )
+        except subprocess.TimeoutExpired:
+            return "hung", f"the suite did not finish in {SUITE_LIMIT_S} s"
         return ("pass" if result.returncode == 0 else "fail"), result.stderr
 
 
@@ -260,6 +283,8 @@ def main() -> int:
                 survivors += 1
             elif verdict == "fail":
                 print(f"killed   {path}: {promise}")
+            elif verdict == "hung":
+                print(f"killed   {path}: {promise} (the suite hung)")
             else:
                 print(f"SURVIVED {path}: {promise}")
                 survivors += 1

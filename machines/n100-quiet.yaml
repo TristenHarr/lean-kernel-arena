@@ -39,6 +39,7 @@ sandbox:
   user_prefix: lkc-          # the user is the prefix and the first 12 hex digits of sha256(name)
   homes: /srv/lka/checkers   # each checker's home is homes/<name>
   tmp_bytes: 4294967296      # each run's private /tmp
+  input_group: lka-input     # alone can read the staged inputs; a run gets it, a build never does
 
 # A run is killed at the test's arena limit times box_factor (or the checker's own, if shorter).
 # A failure is scored at twice the test's limit alone, so a short limit of the checker's own

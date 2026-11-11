@@ -70,6 +70,17 @@ class Staging(unittest.TestCase):
             self.assertEqual(by_name["mathlib"]["timeout"], 5680)
             self.assertEqual(by_name["bugs/bad1"]["outcome"], "reject")
 
+    def test_the_store_is_readable_by_its_group_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            src = published(tmp, cedar_bytes=b'{"meta": "cedar, rebuilt"}\n')
+            manifest = stage_tests(src / "results.json", tarball=src / "lean-arena-tests.tar.gz",
+                                   sources=[exports(tmp)], store=tmp / "store", allow_mismatch=set())
+            for test in manifest["tests"]:
+                path = Path(test["path"])
+                self.assertEqual(path.stat().st_mode & 0o777, 0o640, test["name"])
+                self.assertEqual(path.parent.stat().st_mode & 0o777, 0o750, test["name"])
+
     def test_identical_bytes_are_stored_once(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)

@@ -322,6 +322,8 @@ def pareto_layers(vectors: dict) -> dict:
     while left:
         layer += 1
         front = [n for n, v in left.items() if not any(dominates(o, v) for m, o in left.items() if m != n)]
+        if not front:
+            raise BoardError("every vector left is dominated: dominance is not a strict order")
         for name in front:
             layers[name] = layer
             del left[name]

@@ -3,12 +3,17 @@
  *
  *   perf stat -D -1 --control fifo:CTL,ACK ... -- \
  *     lka-shim --cgroup DIR --uid U --gid G --workdir DIR --env FILE --tmp-bytes N \
- *              --overlay HOME --ctl CTL --ack ACK --status FILE -- COMMAND
+ *              --overlay HOME --input FILE --input-gid G --hide DIR \
+ *              --ctl CTL --ack ACK --status FILE -- COMMAND
  *
  * As root it joins the run's cgroup, turns core dumps off, gives the run its own network
  * namespace (loopback only) and mount namespace (a private /tmp and /dev/shm, and the checker's
  * home behind an overlay whose writes live in that /tmp and vanish with the run, so no run can
- * leave anything for the next), then drops to the checker's own user for good. Only then does
+ * leave anything for the next). In that namespace the store of staged inputs (--hide) is covered
+ * by an empty read-only tmpfs and the run's own input alone shown at its own path, read-only: the
+ * store is readable only by the input group, which the run is given and a build never is, so no
+ * checker ever sees a round's other inputs or its invalid twins. Then it drops to the checker's
+ * own user for good. Only then does
  * it switch perf's counters on, so its own start-up is never measured. It clocks the checker
  * from just before the exec to the moment `waitpid` returns, switches the counters off, and
  * writes the checker's exit status, its wall time and the largest resident set of any process
@@ -109,6 +114,33 @@ static void throwaway_overlay(const char *lower) {
     if (mount("overlay", lower, "overlay", 0, options) < 0) die("mount overlay on %s", lower);
 }
 
+/* The store under `hide` covered by an empty read-only tmpfs, with `input` alone back at its own
+ * path, bound read-only from a descriptor taken before the store was covered. */
+static void isolate_input(const char *input, const char *hide) {
+    size_t n = strlen(hide);
+    if (strncmp(input, hide, n) != 0 || input[n] != '/') { errno = 0; die("%s is not inside %s", input, hide); }
+    char path[4096];
+    if (snprintf(path, sizeof path, "%s", input) >= (int)sizeof path) { errno = 0; die("input path too long"); }
+    int fd = open(input, O_PATH | O_CLOEXEC);
+    if (fd < 0) die("open %s", input);
+    if (mount("tmpfs", hide, "tmpfs", MS_NOSUID | MS_NODEV, "size=1m,mode=0755") < 0) die("mount tmpfs on %s", hide);
+    for (char *p = path + n + 1; (p = strchr(p, '/')) != NULL; p++) {
+        *p = '\0';
+        make_dir(path, 0755);
+        *p = '/';
+    }
+    int made = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0444);
+    if (made < 0) die("create %s", path);
+    close(made);
+    char source[64];
+    snprintf(source, sizeof source, "/proc/self/fd/%d", fd);
+    if (mount(source, path, NULL, MS_BIND, NULL) < 0) die("bind %s", input);
+    if (mount(NULL, path, NULL, MS_REMOUNT | MS_BIND | MS_RDONLY | MS_NOSUID | MS_NODEV, NULL) < 0)
+        die("make %s read-only", input);
+    close(fd);
+    if (mount(NULL, hide, NULL, MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NODEV, NULL) < 0) die("make %s read-only", hide);
+}
+
 static void private_tmpfs(const char *where, unsigned long long bytes) {
     char options[64];
     snprintf(options, sizeof options, "size=%llu,mode=1777", bytes);
@@ -142,8 +174,8 @@ static const char *arg_value(int *i, int argc, char **argv) {
 
 int main(int argc, char **argv) {
     const char *cgroup = NULL, *workdir = NULL, *env_file = NULL, *ctl_path = NULL, *ack_path = NULL,
-               *status_path = NULL, *overlay = NULL;
-    long uid = -1, gid = -1;
+               *status_path = NULL, *overlay = NULL, *input = NULL, *hide = NULL;
+    long uid = -1, gid = -1, input_gid = -1;
     unsigned long long tmp_bytes = 0;
     int command = -1;
     for (int i = 1; i < argc; i++) {
@@ -155,6 +187,9 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--env")) env_file = arg_value(&i, argc, argv);
         else if (!strcmp(argv[i], "--tmp-bytes")) tmp_bytes = strtoull(arg_value(&i, argc, argv), NULL, 10);
         else if (!strcmp(argv[i], "--overlay")) overlay = arg_value(&i, argc, argv);
+        else if (!strcmp(argv[i], "--input")) input = arg_value(&i, argc, argv);
+        else if (!strcmp(argv[i], "--input-gid")) input_gid = strtol(arg_value(&i, argc, argv), NULL, 10);
+        else if (!strcmp(argv[i], "--hide")) hide = arg_value(&i, argc, argv);
         else if (!strcmp(argv[i], "--ctl")) ctl_path = arg_value(&i, argc, argv);
         else if (!strcmp(argv[i], "--ack")) ack_path = arg_value(&i, argc, argv);
         else if (!strcmp(argv[i], "--status")) status_path = arg_value(&i, argc, argv);
@@ -164,6 +199,7 @@ int main(int argc, char **argv) {
     if (command < 0 || command >= argc) die("no command after --");
     if (!cgroup || !workdir || !env_file || !ctl_path || !ack_path || !status_path || uid <= 0 || gid <= 0 || !tmp_bytes)
         die("missing --cgroup, --uid, --gid, --workdir, --env, --tmp-bytes, --ctl, --ack or --status");
+    if (!input || !hide || input_gid <= 0) die("missing --input, --input-gid or --hide: a run sees its own input alone");
     if (geteuid() != 0) die("must start as root");
 
     char procs[4096];
@@ -179,6 +215,7 @@ int main(int argc, char **argv) {
     private_tmpfs("/tmp", tmp_bytes);
     private_tmpfs("/dev/shm", tmp_bytes);
     if (overlay) throwaway_overlay(overlay);
+    isolate_input(input, hide);
 
     int ctl = open(ctl_path, O_WRONLY | O_CLOEXEC);
     if (ctl < 0) die("open %s", ctl_path);
@@ -188,7 +225,8 @@ int main(int argc, char **argv) {
     if (status_fd < 0) die("open %s", status_path);
     char **envp = read_env(env_file);
 
-    if (setgroups(0, NULL) < 0) die("setgroups");
+    gid_t groups[1] = {(gid_t)input_gid};
+    if (setgroups(1, groups) < 0) die("setgroups");
     if (setresgid((gid_t)gid, (gid_t)gid, (gid_t)gid) < 0) die("setresgid");
     if (setresuid((uid_t)uid, (uid_t)uid, (uid_t)uid) < 0) die("setresuid");
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0) die("no_new_privs");
