@@ -217,8 +217,9 @@ MUTANTS = [
     ("lka_quiet/encode.py", "            ctors = [{**c, \"name\": n(c[\"name\"]), \"induct\": n(c[\"induct\"]),",
      "            ctors = [{**c, \"name\": n(c[\"name\"]), \"induct\": c[\"induct\"],",
      "a constructor's inductive follows its renumbering"),
-    ("lka_quiet/encode.py", "            body.pop(_ID_KEY[k], None)\n", "",
-     "a fingerprint does not depend on ids"),
+    # (The fingerprint's id-independence is held by test_every_declaration_is_kept: the resolver's
+    # rewrite maps a record's own id to the constant "self" before hashing, so popping that id key is
+    # redundant and removing it is behaviour-preserving -- an equivalent mutant, not a coverage gap.)
     ("lka_quiet/helper.py", "status=str(run_dir / \"status.json\"), run=req[\"cmd\"], input=req[\"input\"], input_gid=input_gid,",
      "status=str(run_dir / \"status.json\"), run=req[\"cmd\"], input=None, input_gid=input_gid,",
      "every measured run sees its own input alone"),
@@ -259,6 +260,14 @@ MUTANTS = [
      "a session stops after the passes asked for"),
     ("lka_quiet/cli.py", "    runs = list(store.records()) + [r for other in extra for r in other.records()]",
      "    runs = list(store.records())", "a pull request's runs are scored beside the board's"),
+    ("quietbox/gather-exports.py", "not in tarball_members", "in tarball_members",
+     "a round's large exports are the tests the test tarball does not hold"),
+    ("quietbox/gather-exports.py", 'if hashed[path] == test["sha256"]:', 'if hashed[path] != test["sha256"]:',
+     "a large export is the file whose sha256 is the published one"),
+    ("quietbox/gather-exports.py", "total += match.stat().st_size", "total += 0",
+     "the gathered bytes are the sizes of the files linked"),
+    ("lka_quiet/cli.py", '_sha_file(f) == test["sha256"]', '_sha_file(f) is not None',
+     "a source holds a round's test only with the published bytes"),
 ]
 
 

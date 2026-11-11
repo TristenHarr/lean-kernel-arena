@@ -91,6 +91,19 @@ class Reencode(unittest.TestCase):
                         if key in r:
                             defined.add((kind, r[key]))
 
+    def test_a_projection_names_its_structure_and_its_struct_as_references(self):
+        # Its structure name (a projection reads a field of that structure) and the term it projects
+        # from; a real export always references the structure name elsewhere too, but references()
+        # must declare it here, or a structure named only by a projection goes unresolved.
+        self.assertEqual(references({"ie": 90, "proj": {"idx": 0, "struct": 4, "typeName": 14}}),
+                         [("n", 14), ("e", 4)])
+        for path in EXPORTS:
+            records = parse(read(path))
+            for r in records:
+                if "proj" in r:
+                    self.assertIn(("n", r["proj"]["typeName"]), references(r))
+                    self.assertIn(("e", r["proj"]["struct"]), references(r))
+
     def test_ids_are_dense_in_the_new_order(self):
         first = {"n": 1, "l": 1, "e": 0}
         for path in EXPORTS:
