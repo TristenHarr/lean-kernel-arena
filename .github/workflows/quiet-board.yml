@@ -67,18 +67,43 @@ jobs:
       - name: Stage the arena tree the checkers build from
         run: rsync -a --delete --exclude=.git --exclude=_build --exclude=_out --exclude=_results ./ "$STATE/arena/"
 
-      - name: Stage the official round's inputs
-        run: |
-          curl -fsSL -o "$STATE/published/results.json" https://arena.lean-lang.org/results.json
-          curl -fsSL -o "$STATE/published/lean-arena-tests.tar.gz" https://arena.lean-lang.org/lean-arena-tests.tar.gz
-          nix develop --command python3 lka.py quiet-stage --published "$STATE/published" \
-            --source "$STATE/exports" --store "$STATE/tests" --manifest "$STATE/manifest.json" --allow-mismatch cedar
-
       - name: Build the checkers whose source changed
         run: |
           nix develop --command python3 lka.py quiet-build --checker "${{ inputs.checkers || '*' }}" \
             --results "$STATE/results" ${{ inputs.rebuild && '--force' || '' }} \
             || echo "::warning::some checkers did not build; they are not measured"
+
+      # Lean's own kernel, built for the runner from this commit's checkers/official: an invalid twin is
+      # staged only if it rejects it.
+      - name: Build the kernel that verifies invalid twins
+        run: |
+          rsync -a --delete checkers/official/ "$STATE/verifier/"
+          nix develop --command bash -c 'cd "$STATE/verifier" && lake build'
+
+      # A round is a calendar month. Its seed is drawn once, kept on the box (0600, the runner's), and
+      # published only when the round is over; the manifest commits to it by its sha256.
+      - name: The round and its seed
+        run: |
+          round="$(date -u +%Y-%m)"
+          echo "ROUND=$round" >> "$GITHUB_ENV"
+          install -d -m 0700 "$STATE/rounds/$round"
+          if [ ! -s "$STATE/rounds/$round/seed" ]; then
+            (umask 077 && od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$STATE/rounds/$round/seed")
+          fi
+
+      - name: Stage the round's inputs
+        run: |
+          curl -fsSL -o "$STATE/published/results.json" https://arena.lean-lang.org/results.json
+          curl -fsSL -o "$STATE/published/lean-arena-tests.tar.gz" https://arena.lean-lang.org/lean-arena-tests.tar.gz
+          manifest="$STATE/rounds/$ROUND/manifest.json"
+          if [ -s "$manifest" ] && python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); r = json.load(open(sys.argv[2])); sys.exit(m["arena_revision"] != r["meta"]["git_revision"])' "$manifest" "$STATE/published/results.json"; then
+            echo "the round's inputs are staged for this arena revision"
+          else
+            nix develop --command python3 lka.py quiet-stage --published "$STATE/published" \
+              --source "$STATE/exports" --store "$STATE/tests" --manifest "$manifest" --allow-mismatch cedar \
+              --round-seed "$STATE/rounds/$ROUND/seed" --season "$SEASON" \
+              --verify-with "$STATE/verifier/.lake/build/bin/kernel"
+          fi
 
       - name: Quiet the machine
         run: sudo -n /usr/local/libexec/lka/lka-quiet on
@@ -88,8 +113,8 @@ jobs:
 
       - name: Measure
         run: |
-          nix develop --command python3 lka.py quiet-measure --machine "$MACHINE" --manifest "$STATE/manifest.json" \
-            --results "$STATE/results" --round "$(date -u +%Y-%m)" --checker "${{ inputs.checkers || '*' }}" \
+          nix develop --command python3 lka.py quiet-measure --machine "$MACHINE" --manifest "$STATE/rounds/$ROUND/manifest.json" \
+            --results "$STATE/results" --round "$ROUND" --checker "${{ inputs.checkers || '*' }}" \
             --budget-hours "${{ inputs.budget_hours || '20' }}"
 
       - name: Leave the quiet state
@@ -99,8 +124,16 @@ jobs:
       - name: Score
         run: |
           nix develop --command python3 lka.py quiet-score --season "$SEASON" --machine "$MACHINE" \
-            --manifest "$STATE/manifest.json" --results "$STATE/results" --epoch-file /etc/lka/epoch --out board.json
+            --manifest "$STATE/rounds/$ROUND/manifest.json" --results "$STATE/results" --epoch-file /etc/lka/epoch --out board.json
           tar -C "$STATE/results" -cJf quiet-results.tar.xz "$(cat /etc/lka/epoch)"
+
+      - name: Reveal the seeds of finished rounds
+        run: |
+          mkdir -p revealed
+          for dir in "$STATE"/rounds/*/; do
+            round="$(basename "$dir")"
+            if [ "$round" != "$ROUND" ] && [ -s "$dir/seed" ]; then cp "$dir/seed" "revealed/round-$round-seed.txt"; fi
+          done
 
       - uses: actions/upload-artifact@v4
         with:
@@ -108,6 +141,7 @@ jobs:
           path: |
             board.json
             quiet-results.tar.xz
+            revealed/
           retention-days: 30
           overwrite: true
 
@@ -182,7 +216,9 @@ jobs:
           gh release view "quiet-$epoch" >/dev/null 2>&1 || \
             gh release create "quiet-$epoch" --title "Quiet board runs, epoch $epoch" \
               --notes "Every run record of machine epoch $epoch. Re-score with lka.py quiet-score."
-          gh release upload "quiet-$epoch" quiet-results.tar.xz board.json --clobber
+          shopt -s nullglob
+          seeds=(revealed/*.txt)
+          gh release upload "quiet-$epoch" quiet-results.tar.xz board.json "${seeds[@]}" --clobber
       - uses: actions/upload-pages-artifact@v3
         with:
           name: github-pages-${{ github.run_attempt }}

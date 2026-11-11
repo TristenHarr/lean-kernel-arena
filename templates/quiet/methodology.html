@@ -23,6 +23,50 @@ is optimising the checker.</p>
     <li><strong>Everything published.</strong> Every run record, the machine's configuration and the scoring code are public; the board re-scores to the same bytes.</li>
 </ul>
 
+<h2 id="gaming">Against gaming</h2>
+<p>When a measure becomes a target, it stops measuring what it did unless the only way to move it is to get better at the thing
+itself. Each way a checker could move this board without being a better checker, and what the board does about it:</p>
+</div>
+<div class="table-card">
+    <table class="data">
+        <thead><tr><th>A checker could…</th><th>What the board does</th></tr></thead>
+        <tbody>
+        <tr><td>be fast on a proxy, not on what users wait for</td>
+            <td>Scores wall time on one core and on four, peak memory and energy, on whole libraries. Instructions, the Arena's measure,
+            rank in a category of their own and in the Arena's order, beside the rest.</td></tr>
+        <tr><td>recognise a published input and answer from memory</td>
+            <td>Every round measures the Arena's inputs re-encoded from the round's seed: the same declarations and the same
+            verdicts, in new bytes, ids and layout, so no published file is ever what is measured.</td></tr>
+        <tr><td>skim, or answer by recognising what an input looks like</td>
+            <td>Each round adds an invalid twin of the tests the season names: one early declaration's value swapped for another's of a
+            different type, kept only if Lean's kernel rejects it. Accepting one is accepting an invalid proof: the checker is unsound and unranked.</td></tr>
+        <tr><td>read the round's inputs or twins while it is built, with the network</td>
+            <td>The staged inputs are readable by one input group alone. A measured run is given it and sees its own input and nothing else
+            staged; a build never is.</td></tr>
+        <tr><td>carry anything from one run to the next</td>
+            <td>No network; a home whose writes vanish with the run; a private /tmp. Every run starts from the build.</td></tr>
+        <tr><td>decline what it is slow at, or stop early on its own short limit</td>
+            <td>A valid proof not accepted costs twice the test's own time limit, whatever limit the checker set itself.</td></tr>
+        <tr><td>dress a crash up as a rejection</td>
+            <td>A run in which any process died of a signal or of memory is an error, whatever exit code a wrapper turned it into.</td></tr>
+        <tr><td>be good only on the tests this suite happens to hold</td>
+            <td>Beside every place is the range a redrawn suite could give it; the weights' influence is shown on the board; the Pareto layers
+            need no weights at all.</td></tr>
+        <tr><td>win on noise</td>
+            <td>Runs prove their conditions or are repeated; medians are taken until tight; neighbours whose runs cannot be told apart share a place.</td></tr>
+        <tr><td>argue the rules after the results</td>
+            <td>A season's rules, the tests it twins included, are fixed before its first run; a change starts a new season.</td></tr>
+        </tbody>
+    </table>
+</div>
+{% if board.round_inputs %}
+<p class="section-note">This round's inputs were drawn from a seed whose sha256 is
+<span class="mono">{{ board.round_inputs.seed_sha256 }}</span>; it is published when the round ends, and with it anyone can rebuild every input
+and twin measured. {{ board.round_inputs.twins }} invalid twins{% if board.round_inputs.twins_refused %}; no twin Lean's kernel rejects was found
+for {{ board.round_inputs.twins_refused | join(', ') }}{% endif %}.</p>
+{% endif %}
+<div class="prose">
+
 <h2 id="machine">The machine</h2>
 <p>One dedicated mini PC that does nothing else. CPU 0 keeps the system, the runner, the measurement helper and every interrupt; the four-core lane is
 the whole machine, the one-core lane is CPU 3 alone. The clock is pinned to the highest frequency the machine holds on all cores for two hours without

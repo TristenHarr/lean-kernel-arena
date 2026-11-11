@@ -4,39 +4,104 @@
   "description": "One season's rules: what is measured, how tests are grouped and weighted, how failures and uncertainty are scored.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "season", "reference", "unranked", "floors", "failure_factor", "caps", "metrics", "families", "categories", "pareto", "scaling", "bootstrap", "sensitivity"],
+  "required": [
+    "schema",
+    "season",
+    "reference",
+    "unranked",
+    "floors",
+    "failure_factor",
+    "caps",
+    "metrics",
+    "families",
+    "categories",
+    "pareto",
+    "scaling",
+    "bootstrap",
+    "sensitivity",
+    "inputs"
+  ],
   "definitions": {
     "weights": {
       "type": "object",
       "minProperties": 1,
-      "additionalProperties": {"type": "number", "exclusiveMinimum": 0}
+      "additionalProperties": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      }
     }
   },
   "properties": {
-    "schema": {"const": "lka-quiet-scoring/1"},
-    "season": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
-    "reference": {"type": "string"},
-    "unranked": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "schema": {
+      "const": "lka-quiet-scoring/1"
+    },
+    "season": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "reference": {
+      "type": "string"
+    },
+    "unranked": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
     "floors": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["wall_s", "memory_bytes", "energy_j", "instructions"],
+      "required": [
+        "wall_s",
+        "memory_bytes",
+        "energy_j",
+        "instructions"
+      ],
       "properties": {
-        "wall_s": {"type": "number", "exclusiveMinimum": 0},
-        "memory_bytes": {"type": "number", "exclusiveMinimum": 0},
-        "energy_j": {"type": "number", "exclusiveMinimum": 0},
-        "instructions": {"type": "number", "exclusiveMinimum": 0}
+        "wall_s": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "memory_bytes": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "energy_j": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "instructions": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
       }
     },
-    "failure_factor": {"type": "number", "minimum": 1},
+    "failure_factor": {
+      "type": "number",
+      "minimum": 1
+    },
     "caps": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["memory_bytes", "power_w", "instruction_rate"],
+      "required": [
+        "memory_bytes",
+        "power_w",
+        "instruction_rate"
+      ],
       "properties": {
-        "memory_bytes": {"type": "integer", "minimum": 1},
-        "power_w": {"type": "number", "exclusiveMinimum": 0},
-        "instruction_rate": {"type": "number", "exclusiveMinimum": 0}
+        "memory_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "power_w": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "instruction_rate": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
       }
     },
     "metrics": {
@@ -45,12 +110,30 @@
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["lane", "quantity", "title", "unit"],
+        "required": [
+          "lane",
+          "quantity",
+          "title",
+          "unit"
+        ],
         "properties": {
-          "lane": {"type": "string"},
-          "quantity": {"enum": ["wall_s", "memory_bytes", "energy_j", "instructions"]},
-          "title": {"type": "string"},
-          "unit": {"type": "string"}
+          "lane": {
+            "type": "string"
+          },
+          "quantity": {
+            "enum": [
+              "wall_s",
+              "memory_bytes",
+              "energy_j",
+              "instructions"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          }
         }
       }
     },
@@ -60,19 +143,42 @@
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["title", "tests"],
+        "required": [
+          "title",
+          "tests"
+        ],
         "properties": {
-          "title": {"type": "string"},
-          "description": {"type": "string"},
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
           "tests": {
             "type": "array",
             "minItems": 1,
             "items": {
               "anyOf": [
-                {"type": "string"},
                 {
-                  "type": "object", "additionalProperties": false, "required": ["name", "weight"],
-                  "properties": {"name": {"type": "string"}, "weight": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}}
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "weight"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "weight": {
+                      "type": "number",
+                      "exclusiveMinimum": 0,
+                      "maximum": 1
+                    }
+                  }
                 }
               ]
             }
@@ -86,48 +192,154 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "title", "description", "metrics", "families"],
+        "required": [
+          "id",
+          "title",
+          "description",
+          "metrics",
+          "families"
+        ],
         "properties": {
-          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
-          "title": {"type": "string"},
-          "description": {"type": "string"},
-          "rule": {"enum": ["weighted", "arena"]},
-          "metrics": {"$ref": "#/definitions/weights"},
-          "families": {"$ref": "#/definitions/weights"}
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "rule": {
+            "enum": [
+              "weighted",
+              "arena"
+            ]
+          },
+          "metrics": {
+            "$ref": "#/definitions/weights"
+          },
+          "families": {
+            "$ref": "#/definitions/weights"
+          }
         },
-        "if": {"properties": {"rule": {"const": "arena"}}, "required": ["rule"]},
-        "then": {"properties": {"metrics": {"maxProperties": 1}}}
+        "if": {
+          "properties": {
+            "rule": {
+              "const": "arena"
+            }
+          },
+          "required": [
+            "rule"
+          ]
+        },
+        "then": {
+          "properties": {
+            "metrics": {
+              "maxProperties": 1
+            }
+          }
+        }
       }
     },
-    "pareto": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "pareto": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
     "scaling": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["serial", "parallel", "parallel_cpus", "category"],
+      "required": [
+        "serial",
+        "parallel",
+        "parallel_cpus",
+        "category"
+      ],
       "properties": {
-        "serial": {"type": "string"},
-        "parallel": {"type": "string"},
-        "parallel_cpus": {"type": "integer", "minimum": 1},
-        "category": {"type": "string"}
+        "serial": {
+          "type": "string"
+        },
+        "parallel": {
+          "type": "string"
+        },
+        "parallel_cpus": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "category": {
+          "type": "string"
+        }
       }
     },
     "bootstrap": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["replicates", "seed", "confidence"],
+      "required": [
+        "replicates",
+        "seed",
+        "confidence"
+      ],
       "properties": {
-        "replicates": {"type": "integer", "minimum": 100},
-        "seed": {"type": "string"},
-        "confidence": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1}
+        "replicates": {
+          "type": "integer",
+          "minimum": 100
+        },
+        "seed": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 1
+        }
       }
     },
     "sensitivity": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["category", "factors"],
+      "required": [
+        "category",
+        "factors"
+      ],
       "properties": {
-        "category": {"type": "string"},
-        "factors": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 1}
+        "category": {
+          "type": "string"
+        },
+        "factors": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "minItems": 1
+        }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "twin",
+        "twin_prefix"
+      ],
+      "description": "What a round measures besides the Arena's own inputs, each re-encoded from the round's seed",
+      "properties": {
+        "twin": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "description": "Tests (patterns) of which an invalid twin fresh/<test> is made each round"
+        },
+        "twin_prefix": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "A twin's swapped declaration is among the first twin_prefix of its source"
+        }
       }
     }
   }

@@ -222,6 +222,7 @@ class RenderedRound(unittest.TestCase):
                             "arena_revision": cls.published["meta"]["git_revision"], "revision_url": None,
                             "published": cls.published["meta"]["timestamp"], "note": "A test render."}
         board["machine"] = {"name": "official arena runners (preview)"}
+        board["round_inputs"] = {"seed_sha256": "ab" * 32, "twins": 7, "twins_refused": ["reachability"]}
         cls.board = board
         cls.tmp = tempfile.TemporaryDirectory(prefix="lka-site-")
         cls.out = Path(cls.tmp.name)
@@ -302,6 +303,17 @@ class RenderedRound(unittest.TestCase):
             self.assertIn(f'data-test="{test["name"]}"', html)
         for checker in self.published["checkers"]:
             self.assertIn(f'checker/{checker["name"]}/', html)
+
+    def test_the_methodology_says_how_the_board_is_kept_from_being_gamed(self):
+        html = self.page("quiet", "methodology", "index.html")
+        self.assertIn('id="gaming"', html)
+        for phrase in ("re-encoded", "invalid twin", "input group", "redrawn suite", "fixed before"):
+            self.assertIn(phrase, html)
+
+    def test_the_rounds_commitment_is_shown(self):
+        html = self.page("quiet", "methodology", "index.html")
+        self.assertIn("ab" * 32, html)
+        self.assertIn("reachability", html)
 
     def test_every_checker_has_a_page(self):
         for checker in self.published["checkers"]:

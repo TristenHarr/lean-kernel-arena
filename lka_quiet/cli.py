@@ -233,14 +233,55 @@ def _sentinel(machine, tests_by_name, checkers_by_name, measure, env, epoch, rou
     return read
 
 
-def load_manifest(path: Path) -> list[dict]:
+def read_manifest(path: Path) -> dict:
     manifest = json.loads(Path(path).read_text())
     if manifest.get("schema") != MANIFEST_SCHEMA:
         raise SystemExit(f"{path} is not a staged-tests manifest")
-    return manifest["tests"]
+    return manifest
+
+
+def load_manifest(path: Path) -> list[dict]:
+    return read_manifest(path)["tests"]
+
+
+def public_tests(tests) -> list[dict]:
+    """What a board publishes of its tests while their round runs: each test's name, outcome, limit
+    and the Arena's sha256, and the test an invalid twin was made from; never the bytes measured
+    (their sha256, path or size), which the round's seed reveals when the round closes."""
+    out = []
+    for test in tests:
+        entry = {"name": test["name"], "outcome": test.get("outcome"), "official_sha256": test.get("official_sha256")}
+        for key in ("timeout", "twin_of"):
+            if test.get(key) is not None:
+                entry[key] = test[key]
+        if "encoded_from" not in test and "twin_of" not in test and test.get("size") is not None:
+            entry["size"] = test["size"]
+        out.append(entry)
+    return out
+
+
+def kernel_rejects(kernel: str, timeout_s: float = 3600.0):
+    """The check a twin must pass: `kernel` (the official checker) rejects the file, exit code 1."""
+    def verify(path) -> bool:
+        try:
+            return subprocess.run([kernel, str(path)], capture_output=True, timeout=timeout_s).returncode == 1
+        except subprocess.TimeoutExpired:
+            return False
+    return verify
 
 
 def cmd_quiet_stage(args, lka) -> int:
+    if args.season and not args.twin:
+        import yaml
+        inputs = yaml.safe_load(Path(args.season).read_text())["inputs"]
+        args.twin = list(inputs["twin"])
+        args.twin_prefix = args.twin_prefix or inputs["twin_prefix"]
+    if args.twin and not args.verify_with:
+        print("an invalid twin is staged only once the official kernel rejects it: give --verify-with", file=sys.stderr)
+        return 1
+    if args.twin and not args.round_seed:
+        print("invalid twins are drawn from the round's seed: give --round-seed", file=sys.stderr)
+        return 1
     try:
         manifest = stage_tests(Path(args.published) / "results.json",
                                tarball=Path(args.published) / "lean-arena-tests.tar.gz",
@@ -249,9 +290,17 @@ def cmd_quiet_stage(args, lka) -> int:
     except StageError as error:
         print(error, file=sys.stderr)
         return 1
+    if args.round_seed:
+        seed = Path(args.round_seed).read_text().strip()
+        manifest = encode_round(manifest, seed=seed, store=Path(args.store), twin_from=args.twin or [],
+                                twin_prefix=args.twin_prefix or 400,
+                                verify=kernel_rejects(args.verify_with) if args.verify_with else None)
+        twins = sum(1 for t in manifest["tests"] if t.get("twin_of"))
+        print(f"re-encoded from the round's seed (sha256 {manifest['seed_sha256'][:16]}…), {twins} invalid twins"
+              + (f"; no verified twin for {', '.join(manifest['twins_refused'])}" if manifest["twins_refused"] else ""))
     Path(args.manifest).parent.mkdir(parents=True, exist_ok=True)
     Path(args.manifest).write_text(json.dumps(manifest, indent=1, sort_keys=True) + "\n")
-    flagged = [t["name"] for t in manifest["tests"] if not t["official_match"]]
+    flagged = [t["name"] for t in manifest["tests"] if t["official_match"] is False]
     print(f"staged {len(manifest['tests'])} tests of arena revision {manifest['arena_revision']}"
           + (f"; not the official bytes: {', '.join(flagged)}" if flagged else ""))
     return 0
@@ -356,10 +405,15 @@ def cmd_quiet_score(args, lka) -> int:
     scoring = yaml.safe_load(Path(args.season).read_text())
     machine = yaml.safe_load(Path(args.machine).read_text())
     epoch = Path(args.epoch_file).read_text().strip() if args.epoch_file else args.epoch
-    tests = load_manifest(Path(args.manifest))
+    manifest = read_manifest(Path(args.manifest))
+    tests = manifest["tests"]
     checkers = _checkers(lka, None)
     board = score_store(RunStore(Path(args.results), epoch=epoch), tests, checkers, scoring, machine)
-    board["tests"] = tests
+    board["tests"] = public_tests(tests)
+    if manifest.get("seed_sha256"):
+        board["round_inputs"] = {"seed_sha256": manifest["seed_sha256"],
+                                 "twins": sum(1 for t in tests if t.get("twin_of")),
+                                 "twins_refused": manifest.get("twins_refused", [])}
     builds = load_builds(Path(args.results), epoch)
     board["builds"] = {c["name"]: {k: builds.get(c["name"], {}).get(k) for k in ("ok", "source_hash", "built_at", "duration_s")}
                        for c in checkers}
@@ -383,6 +437,16 @@ def add_parsers(subparsers) -> None:
                        help="Hard-link sources on the store's file system instead of copying (they must never change)")
     stage.add_argument("--allow-mismatch", action="append", metavar="TEST",
                        help="Stage this test even if no file has the official bytes (flagged on the board)")
+    stage.add_argument("--round-seed", metavar="FILE",
+                       help="The round's secret seed: measure every input re-encoded from it (only its sha256 is recorded)")
+    stage.add_argument("--twin", action="append", default=[], metavar="PATTERN",
+                       help="Add an invalid twin fresh/<test> of each test to be accepted matching PATTERN (repeatable)")
+    stage.add_argument("--twin-prefix", type=int, metavar="N",
+                       help="A twin's swapped declaration is among the first N of its source (default: the season's, else 400)")
+    stage.add_argument("--season", metavar="FILE",
+                       help="Take the tests to twin and the prefix from the season's inputs (with --round-seed)")
+    stage.add_argument("--verify-with", metavar="KERNEL",
+                       help="The official checker; a twin is staged only if it rejects it (required with --twin)")
 
     measure = subparsers.add_parser("quiet-measure", help="Run a quiet-board measurement session")
     measure.add_argument("--machine", required=True, help="Machine profile (machines/*.yaml)")

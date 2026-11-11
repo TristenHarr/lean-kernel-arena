@@ -14,6 +14,13 @@ The full method, with every rule typeset, is the site's methodology page
   kernel) have a category of their own, and decide the **Arena order** category: the official board's
   own rule (soundness, completeness, Mathlib instructions, declines) on the same runs, checked against
   lka.py's `board_order_key` so the two boards read side by side. Recorded and shown: cycles, IPC.
+- **Inputs no checker can know in advance.** Each round (a calendar month) measures the Arena's inputs
+  re-encoded from the round's seed (the same declarations and verdicts in new bytes; `lka_quiet/encode.py`)
+  and adds an invalid twin of each test the season names (one early declaration's value swapped for
+  another's of a different type, kept only if Lean's kernel rejects it; `lka_quiet/twins.py`). The seed
+  stays on the box, the board publishes its sha256, and it is released when the round ends. The staged
+  inputs are readable by one group, given to a measured run alone, which sees its own input and nothing
+  else staged; no build ever can.
 - **Runs prove their conditions.** A run that ran off the pinned clock, was throttled, shared its
   cores, or had a counter multiplexed is kept for the record and repeated. A run in which any of the
   checker's processes died of a signal or of memory is an error, whatever exit code a wrapper made.
@@ -32,7 +39,7 @@ The full method, with every rule typeset, is the site's methodology page
 
 | Path | What it is |
 |---|---|
-| `lka_quiet/` | Standard-library Python: run records and validity (`record`, `perf`, `sysfs`), the root helper (`helper`), sessions (`session`, `plan`), scoring (`board`, `stats`, `rng`), the site (`site`, `charts`), builds (`build`), the quiet state (`quiet`), preflight and calibration. |
+| `lka_quiet/` | Standard-library Python: run records and validity (`record`, `perf`, `sysfs`), the root helper (`helper`), sessions (`session`, `plan`), scoring (`board`, `stats`, `rng`), the site (`site`, `charts`), builds (`build`), the quiet state (`quiet`), preflight and calibration, and a round's inputs (`encode`, `twins`). |
 | `quietbox/` | The box: `lka-shim.c` (the last step before a checker), `lka-measure`, `lka-quiet`, `lka-preflight` (root commands), `provision.sh`, `calibrate.py`, the runner service, the selftest. |
 | `machines/` | Machine profiles: lanes, the conditions a run is held to, paths. Calibrated values are written in by `quietbox/calibrate.py` and committed. |
 | `scoring/` | One file per season: metrics, families, categories, statistics. |

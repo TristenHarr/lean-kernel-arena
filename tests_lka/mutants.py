@@ -237,6 +237,15 @@ MUTANTS = [
      "only a test to be accepted is twinned"),
     ("lka_quiet/cli.py", "\"seed_sha256\": hashlib.sha256(seed.encode()).hexdigest()", "\"seed_sha256\": seed",
      "a round commits to its seed and never holds it"),
+    ("lka_quiet/cli.py", "capture_output=True, timeout=timeout_s).returncode == 1",
+     "capture_output=True, timeout=timeout_s).returncode != 0", "only the kernel's rejection verifies a twin"),
+    ("lka_quiet/cli.py", "    if args.twin and not args.verify_with:\n", "    if False:\n",
+     "a twin is never staged unverified"),
+    ("lka_quiet/cli.py", "        if \"encoded_from\" not in test and \"twin_of\" not in test and test.get(\"size\") is not None:",
+     "        if test.get(\"size\") is not None:", "a board never publishes the size of the bytes measured"),
+    ("lka_quiet/cli.py", "        entry = {\"name\": test[\"name\"], \"outcome\": test.get(\"outcome\"), \"official_sha256\": test.get(\"official_sha256\")}",
+     "        entry = {\"name\": test[\"name\"], \"outcome\": test.get(\"outcome\"), \"official_sha256\": test.get(\"official_sha256\"), \"sha256\": test.get(\"sha256\")}",
+     "a board never publishes the sha256 of the bytes measured"),
 ]
 
 

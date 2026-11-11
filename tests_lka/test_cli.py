@@ -8,7 +8,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lka_quiet.cli import StageError, built_checkers, encode_round, run_env, score_store, stage_tests
+from lka_quiet.cli import (StageError, built_checkers, cmd_quiet_stage, encode_round, public_tests, run_env,
+                           score_store, stage_tests)
 from lka_quiet.encode import fingerprint
 from lka_quiet.session import RunStore
 
@@ -231,6 +232,114 @@ class RoundInputs(unittest.TestCase):
             tmp = Path(tmp)
             manifest = encode_round(staged_round(tmp), seed="do not publish me", store=tmp / "store", twin_from=["*"])
             self.assertNotIn("do not publish me", json.dumps(manifest))
+
+
+class StageCommand(unittest.TestCase):
+    """quiet-stage with a round seed: the round's inputs, re-encoded, twins verified by a kernel."""
+
+    def stage(self, tmp: Path, **flags):
+        import gzip
+        import types
+        published = tmp / "published"
+        published.mkdir()
+        source = tmp / "exports"
+        source.mkdir()
+        tests = []
+        for name, outcome in ROUND_TESTS.items():
+            data = gzip.open(EXPORTS / f"{name}.ndjson.gz").read()
+            (source / f"{name}.ndjson").write_bytes(data)
+            tests.append({"name": name, "outcome": outcome, "sha256": sha(data), "size": len(data), "timeout": 300})
+        (published / "results.json").write_text(json.dumps({"meta": {"git_revision": "r1"}, "tests": tests}))
+        args = types.SimpleNamespace(published=str(published), source=[str(source)], store=str(tmp / "store"),
+                                     manifest=str(tmp / "manifest.json"), link=False, allow_mismatch=[],
+                                     round_seed=None, twin=[], twin_prefix=150, verify_with=None, season=None)
+        for key, value in flags.items():
+            setattr(args, key, value)
+        return cmd_quiet_stage(args, None), tmp / "manifest.json"
+
+    def kernel(self, tmp: Path, code: int) -> str:
+        script = tmp / "kernel"
+        script.write_text(f"#!/bin/sh\nexit {code}\n")
+        script.chmod(0o755)
+        return str(script)
+
+    def test_without_a_seed_the_official_bytes_are_staged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, manifest = self.stage(Path(tmp))
+            self.assertEqual(code, 0)
+            tests = json.loads(manifest.read_text())["tests"]
+            self.assertTrue(all(t["sha256"] == t["official_sha256"] for t in tests))
+            self.assertNotIn("seed_sha256", json.loads(manifest.read_text()))
+
+    def test_a_seed_re_encodes_and_a_rejecting_kernel_verifies_twins(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            seed = tmp / "seed"
+            seed.write_text("a round's secret\n")
+            code, manifest = self.stage(tmp, round_seed=str(seed), twin=["subject-*"], verify_with=self.kernel(tmp, 1))
+            self.assertEqual(code, 0)
+            data = json.loads(manifest.read_text())
+            self.assertEqual(data["seed_sha256"], sha(b"a round's secret"))
+            self.assertIn("fresh/subject-reduction-redex", [t["name"] for t in data["tests"]])
+            self.assertTrue(all(t["sha256"] != t["official_sha256"] for t in data["tests"] if not t.get("twin_of")))
+
+    def test_a_kernel_that_accepts_every_twin_leaves_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            seed = tmp / "seed"
+            seed.write_text("s")
+            code, manifest = self.stage(tmp, round_seed=str(seed), twin=["subject-*"], verify_with=self.kernel(tmp, 0))
+            data = json.loads(manifest.read_text())
+            self.assertEqual([t for t in data["tests"] if t.get("twin_of")], [])
+            self.assertEqual(data["twins_refused"], ["subject-reduction-redex"])
+
+    def test_only_a_rejection_verifies_a_twin_never_a_decline_or_a_crash(self):
+        for code in (2, 134):
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(exit_code=code):
+                tmp = Path(tmp)
+                seed = tmp / "seed"
+                seed.write_text("s")
+                _, manifest = self.stage(tmp, round_seed=str(seed), twin=["subject-*"], verify_with=self.kernel(tmp, code))
+                self.assertEqual(json.loads(manifest.read_text())["twins_refused"], ["subject-reduction-redex"])
+
+    def test_the_season_names_the_tests_to_twin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            seed = tmp / "seed"
+            seed.write_text("s")
+            season = tmp / "season.yaml"
+            season.write_text("inputs:\n  twin: [subject-*, init-prefix]\n  twin_prefix: 120\n")
+            code, manifest = self.stage(tmp, round_seed=str(seed), season=str(season), twin_prefix=None,
+                                        verify_with=self.kernel(tmp, 1))
+            self.assertEqual(code, 0)
+            twins = {t["twin_of"] for t in json.loads(manifest.read_text())["tests"] if t.get("twin_of")}
+            self.assertEqual(twins, {"subject-reduction-redex", "init-prefix"})
+
+    def test_a_twin_is_never_staged_unverified(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            seed = tmp / "seed"
+            seed.write_text("s")
+            code, manifest = self.stage(tmp, round_seed=str(seed), twin=["*"])
+            self.assertEqual(code, 1)
+            self.assertFalse(manifest.exists())
+
+
+class PublicTests(unittest.TestCase):
+    def test_a_board_names_its_tests_without_the_bytes_measured(self):
+        tests = [{"name": "std", "outcome": "accept", "sha256": "e1", "official_sha256": "o1", "official_match": True,
+                  "path": "/srv/lka/tests/e1.ndjson", "size": 10, "timeout": 300, "encoded_from": "o1"},
+                 {"name": "fresh/std", "outcome": "reject", "sha256": "t1", "official_sha256": None,
+                  "official_match": None, "path": "/srv/lka/tests/t1.ndjson", "size": 11, "timeout": 300,
+                  "twin_of": "std"}]
+        self.assertEqual(public_tests(tests), [
+            {"name": "std", "outcome": "accept", "official_sha256": "o1", "timeout": 300},
+            {"name": "fresh/std", "outcome": "reject", "official_sha256": None, "timeout": 300, "twin_of": "std"}])
+
+    def test_unencoded_tests_keep_their_size(self):
+        tests = [{"name": "std", "outcome": "accept", "sha256": "o1", "official_sha256": "o1", "official_match": True,
+                  "path": "/p", "size": 10}]
+        self.assertEqual(public_tests(tests), [{"name": "std", "outcome": "accept", "official_sha256": "o1", "size": 10}])
 
 
 class Environment(unittest.TestCase):

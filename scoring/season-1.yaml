@@ -112,6 +112,14 @@ categories:
     metrics: {I: 1}
     families: {mathlib: 1}
 
+# Each round measures the Arena's inputs re-encoded from the round's seed (committed to by its
+# sha256 when the round starts, published when it ends), and an invalid twin of each test named
+# here: one early declaration's value swapped for another's of a different type, kept only if the
+# official kernel rejects it. A checker that answers a known input from memory accepts the twin.
+inputs:
+  twin: [mathlib, init, std, cslib, cedar, con-leche, navier-stokes-euler, reachability, init-prelude]
+  twin_prefix: 400
+
 pareto: [multi-core, single-core, memory, energy]
 
 scaling: {serial: 1core, parallel: 4core, parallel_cpus: 4, category: overall}

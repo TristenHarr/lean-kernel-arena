@@ -109,6 +109,13 @@ class Seasons(unittest.TestCase):
                         self.assertTrue(any(fnmatch.fnmatchcase(n, pattern) for n in names),
                                         f"{pattern} matches no test under tests/")
 
+    def test_every_twin_pattern_names_a_valid_proof(self):
+        for path in SEASONS:
+            for pattern in load(path)["inputs"]["twin"]:
+                with self.subTest(season=path.name, pattern=pattern):
+                    self.assertTrue(any(fnmatch.fnmatchcase(n, pattern) for n in arena_test_names() if not n.startswith("bugs/")),
+                                    f"{pattern} names no test")
+
     def test_cross_references(self):
         for path in SEASONS:
             season = load(path)
