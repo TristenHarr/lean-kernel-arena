@@ -22,7 +22,7 @@
         <thead><tr><th>Category</th><th class="n">Place</th><th class="n" title="The places a redrawn suite of tests could give it, at 95%">Under a redrawn suite</th><th class="n">Factor</th><th class="n">95% interval</th></tr></thead>
         <tbody>
         {% for category in categories %}{% set r = entry.categories[category.id] %}
-        <tr><td><a href="{{ quiet_root }}category/{{ category.id }}/">{{ category.title }}</a></td>
+        <tr><td><a href="{{ quiet_root }}./{% if category.id == 'overall' %}#overall{% else %}#cat-{{ category.id }}{% endif %}">{{ category.title }}</a></td>
             <td class="n">{{ rank_label(r) }}</td>
             <td class="n">{% if r.rank %}{{ r.rank_lo }}–{{ r.rank_hi }}{% else %}–{% endif %}</td>
             <td class="n">{% if r.factor %}{{ r.factor | factor }}{% else %}–{% endif %}</td>
@@ -35,7 +35,7 @@
 {% if entry.scaling or entry.sensitivity %}
 <dl class="strip" style="margin-top: 16px;">
     {% if entry.scaling %}<div><dt>Speed-up, 1 → 4 cores</dt><dd class="v num">{{ '%.2f' % entry.scaling.speedup }}× ({{ '%.0f' % (entry.scaling.efficiency * 100) }}% efficient)</dd></div>{% endif %}
-    {% if entry.pareto_layer %}<div><dt><a href="{{ quiet_root }}pareto/#layers">Pareto layer</a></dt><dd class="v num">{{ entry.pareto_layer }}</dd></div>{% endif %}
+    {% if entry.pareto_layer %}<div><dt><a href="{{ quiet_root }}./#pareto">Pareto layer</a></dt><dd class="v num">{{ entry.pareto_layer }}</dd></div>{% endif %}
     {% if entry.sensitivity %}<div><dt>Overall place under other weightings</dt><dd class="v num">{{ entry.sensitivity.best }}–{{ entry.sensitivity.worst }}</dd></div>{% endif %}
     <div><dt>Runs repeated as invalid</dt><dd class="v num">{{ entry.invalid_runs }}</dd></div>
     {% if entry.flaky %}<div><dt>Verdict varies</dt><dd class="v">{{ entry.flaky | join(', ') }}</dd></div>{% endif %}

@@ -1,7 +1,7 @@
 {% extends "quiet/base.html" %}
 {% block title %}{{ test.name }}{% endblock %}
 {% block content %}
-<p class="muted"><a href="{{ quiet_root }}./">Board</a> · <a href="{{ quiet_root }}tests/">Tests</a> · {{ test.name }}</p>
+<p class="muted"><a href="{{ quiet_root }}./">Board</a> · <a href="{{ quiet_root }}./#tests">Tests</a> · {{ test.name }}</p>
 <h1><span class="mono">{{ test.name }}</span></h1>
 <p class="lede">{% if test.outcome == 'accept' %}A valid proof: every checker should accept it.{% elif test.outcome == 'reject' %}An invalid proof: every checker should reject it.{% else %}A corner case with no expected outcome: accepting and rejecting are both fine.{% endif %}
 {% if test.size %} {{ test.size | bytes }}.{% endif %}{% if test.timeout %} Time limit {{ test.timeout | seconds }}.{% endif %}

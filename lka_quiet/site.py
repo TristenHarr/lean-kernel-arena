@@ -1,15 +1,12 @@
 """The quiet board's pages: built from board.json beside the arena's own site, under quiet/.
 
-    quiet/                     the board: leaders, the overall ranking, correctness, trade-offs
-    quiet/category/<id>/       one category: its places, their ranges and head-to-head matrix
-    quiet/pareto/              the Pareto fronts: every pair of Pareto categories, the layers, Mathlib and
-                               each library in seconds and bytes
-    quiet/libraries/           every library: each checker's time on four cores and on one, memory, instructions
-    quiet/tests/               every test and every checker's verdict on it, as the Arena tabulates them
+    quiet/                     the one board: leaders, the overall ranking, every category in full (tabbed),
+                               correctness, the Pareto fronts, the libraries, head-to-head, parallelism,
+                               the weight sensitivity and the whole test table
     quiet/test/<name>/         one test: each checker's measurements, with the spread of its runs
     quiet/checker/<name>/      one checker: every category, every test, every metric
     quiet/methodology/         how it is measured and scored, with the season's rules
-    quiet/board.json           the data every page is drawn from
+    quiet/board.json           the data the board is drawn from
 """
 
 import itertools
@@ -467,8 +464,9 @@ class SiteError(ValueError):
 
 def render(board: dict, season: dict, machine: dict, env, outdir: Path, build_info: dict,
            home_at_root: bool = False) -> None:
-    """With `home_at_root`, the board's home is also the site's index (the arena's own index is then
-    arena.html, which lka.py build-site --quiet-home writes)."""
+    """One board page carries the overall ranking, every category in full, the Pareto fronts, the
+    libraries and the tests; each checker and each test keeps its own page. With `home_at_root` the
+    board's home is also the site's index (the arena's own index is then arena.html)."""
     if board.get("schema") != BOARD_SCHEMA:
         raise SiteError(f"board.json is {board.get('schema')!r}; this site renders {BOARD_SCHEMA}: score it again with quiet-score")
     env.filters.update({"factor": charts.factor_text, "seconds": fmt_seconds, "bytes": fmt_bytes,
@@ -483,6 +481,7 @@ def render(board: dict, season: dict, machine: dict, env, outdir: Path, build_in
     categories = board["categories"]
     descriptions = {c["id"]: c.get("description", "") for c in season["categories"]}
     baselines = [n for n in season.get("unranked", []) if n != board["reference"]]
+    has = lambda metric: board["metrics"].get(metric, {}).get("available")
     common = {
         "board": board, "season": season, "machine": machine, "build_info": build_info,
         "categories": categories, "descriptions": descriptions, "preview": board.get("preview"),
@@ -490,19 +489,66 @@ def render(board: dict, season: dict, machine: dict, env, outdir: Path, build_in
         "progress_pct": 100.0 * board["progress"]["measured"] / max(board["progress"]["needed"], 1),
     }
 
+    def category_tabs(prefix: str) -> list[dict]:
+        tabs = []
+        for category in categories:
+            if category["id"] == "overall":
+                continue  # the overall ranking is the board's headline section, not a category tab
+            rows = forest_rows(board, category["id"], prefix)
+            is_arena = category["rule"] == "arena"
+            subtitle = ("The measurement the rule ranks on, against the reference; places by the rule" if is_arena
+                        else descriptions.get(category["id"], ""))
+            metrics = list(category.get("metrics", {}))
+            families = list(category.get("families", {}))
+            tabs.append({
+                "category": category, "description": descriptions.get(category["id"], ""),
+                "forest_svg": _svg(charts.forest(rows, title=category["title"], subtitle=subtitle)),
+                "rows": rows, "results": {n: entries[n]["categories"][category["id"]] for n in entries},
+                "arena_rows": arena_rows(board, category["id"], prefix) if is_arena else None,
+                "unranked": unranked(board, category["id"], baselines),
+                "metric": common["metrics"].get(metrics[0]) if metrics else None,
+                "family_title": board["families"][families[0]]["title"] if families else "",
+            })
+        return tabs
+
+    def pareto_block() -> dict:
+        pareto_ids = _pareto_categories(board, season)
+        titles = _titles(board)
+        views = pair_views(board, season)
+        libraries = board["families"].get("libraries", {"members": []})["members"]
+        absolute = []
+        for test_name, _ in libraries:
+            for xm, ym in (("T4", "M"), ("T1", "M")):
+                if has(xm) and has(ym):
+                    points = absolute_points(board, test_name, xm, ym)
+                    ref = next((p for p in points if p["name"] == board["reference"]), None)
+                    absolute.append({"test": test_name, "x": xm, "y": ym, "points": points, "svg": _svg(charts.pareto(
+                        points, title=f"{test_name}: {board['metrics'][xm]['title'].lower()} and peak memory",
+                        x_label=board["metrics"][xm]["title"].lower(), y_label="peak memory",
+                        better=("low", "low"), x_ticks=charts.time_ticks, y_ticks=charts.byte_ticks,
+                        x_format=fmt_time_tick, y_format=fmt_bytes_tick, x_value=fmt_seconds, y_value=fmt_bytes,
+                        labels="all" if test_name == "mathlib" else "front",
+                        reference=(ref["x"], ref["y"]) if ref else None,
+                        width=780 if test_name == "mathlib" else 380, height=500 if test_name == "mathlib" else 300))})
+        return {
+            "parallel_svg": _svg(charts.parallel(parallel_rows(board, season), [(c, titles[c]) for c in pareto_ids],
+                                                 title="Every Pareto category at once",
+                                                 subtitle="Each line is a ranked checker, its factor on every axis; the front in colour")),
+            "pair_svgs": [{"view": v, "svg": _svg(charts.pareto(
+                v["points"], title=f"{v['x_title']} and {v['y_title']}", x_label=f"{v['x_title'].lower()} (× {board['reference']})",
+                y_label=f"{v['y_title'].lower()} (× {board['reference']})", width=380, height=320))} for v in views],
+            "layers": layer_rows(board, season), "pareto_ids": pareto_ids, "titles": titles,
+            "mathlib_charts": [a for a in absolute if a["test"] == "mathlib"],
+            "library_charts": [a for a in absolute if a["test"] != "mathlib" and a["x"] == "T4"],
+        }
+
+    pareto = pareto_block()
+    matrices = [library_matrix(board, m) for m in season["metrics"] if has(m)]
+    groups = test_groups(board)
+    columns = [c["checker"] for c in groups[0]["tests"][0]["cells"]] if groups else []
+
     def home(prefix: str, root_path: str) -> dict:
         ranked_overall = forest_rows(board, "overall", prefix)
-        multi = next((c for c in categories if c["id"] == "multi-core"), None)
-        memory = next((c for c in categories if c["id"] == "memory"), None)
-        points = []
-        if multi and memory:
-            for entry in board["checkers"]:
-                m, r = entry["categories"].get("multi-core", {}), entry["categories"].get("memory", {})
-                if entry["ranked"] and m.get("factor") and r.get("factor"):
-                    points.append({"name": entry["name"], "x": m["factor"], "y": r["factor"]})
-        pareto_svg = charts.pareto(pareto_2d(points), title="Speed and memory",
-                                   x_label="faster with 4 cores (× official)", y_label="less memory (× official)",
-                                   subtitle="Each ranked checker; those no other checker beats on both axes are labelled.")
         overall_names = [r["name"] for r in ranked_overall]
         h2h = board["head_to_head"].get("overall", {})
         scaling = sorted(((e["name"], e["scaling"]["speedup"]) for e in board["checkers"]
@@ -518,7 +564,8 @@ def render(board: dict, season: dict, machine: dict, env, outdir: Path, build_in
             "overall_rows": ranked_overall,
             "overall_unranked": unranked(board, "overall", baselines),
             "grid": rank_grid(board),
-            "pareto_svg": _svg(pareto_svg), "pareto_points": points,
+            "category_tabs": category_tabs(prefix),
+            "pareto": pareto, "matrices": matrices, "groups": groups, "columns": columns,
             "h2h_svg": _svg(charts.heatmap(overall_names, h2h, title="Head to head, overall",
                                            subtitle="How often the row checker scores better than the column checker over the bootstrap replicates")),
             "h2h_names": overall_names, "h2h": h2h,
@@ -533,25 +580,6 @@ def render(board: dict, season: dict, machine: dict, env, outdir: Path, build_in
     env.get_template("quiet/index.html").stream(home("", "../")).dump(str(root / "index.html"))
     if home_at_root:
         env.get_template("quiet/index.html").stream(home(f"{QUIET_DIR}/", "")).dump(str(Path(outdir) / "index.html"))
-
-    for category in categories:
-        directory = root / "category" / category["id"]
-        directory.mkdir(parents=True, exist_ok=True)
-        rows = forest_rows(board, category["id"], "../../")
-        names = [r["name"] for r in rows]
-        arena = category["rule"] == "arena"
-        subtitle = ("The measurement the rule ranks on, against the reference; places by the rule" if arena
-                    else descriptions.get(category["id"], ""))
-        env.get_template("quiet/category.html").stream({
-            **common, "root_path": "../../../", "quiet_root": "../../", "nav": "categories", "category": category,
-            "description": descriptions.get(category["id"], ""),
-            "forest_svg": _svg(charts.forest(rows, title=category["title"], subtitle=subtitle)),
-            "rows": rows, "results": {n: entries[n]["categories"][category["id"]] for n in entries},
-            "arena_rows": arena_rows(board, category["id"], "../../") if arena else None,
-            "unranked": unranked(board, category["id"], baselines),
-            "h2h_svg": _svg(charts.heatmap(names, board["head_to_head"].get(category["id"], {}),
-                                           title=f"Head to head, {category['title'].lower()}")),
-        }).dump(str(directory / "index.html"))
 
     for entry in board["checkers"]:
         directory = root / "checker" / entry["name"]
@@ -575,53 +603,6 @@ def render(board: dict, season: dict, machine: dict, env, outdir: Path, build_in
         directory.mkdir(parents=True, exist_ok=True)
         depth = sum(part.count("/") + 1 for part in parts)
         return directory, "../" * depth
-
-    directory, prefix = page("pareto")
-    views = pair_views(board, season)
-    layers = layer_rows(board, season)
-    pareto_ids = _pareto_categories(board, season)
-    titles = _titles(board)
-    libraries = board["families"].get("libraries", {"members": []})["members"]
-    has = lambda metric: board["metrics"].get(metric, {}).get("available")
-    absolute = []
-    for test_name, _ in libraries:
-        for xm, ym in (("T4", "M"), ("T1", "M")):
-            if has(xm) and has(ym):
-                points = absolute_points(board, test_name, xm, ym)
-                ref = next((p for p in points if p["name"] == board["reference"]), None)
-                absolute.append({"test": test_name, "x": xm, "y": ym, "points": points, "svg": _svg(charts.pareto(
-                    points, title=f"{test_name}: {board['metrics'][xm]['title'].lower()} and peak memory",
-                    x_label=board["metrics"][xm]["title"].lower(), y_label="peak memory",
-                    better=("low", "low"), x_ticks=charts.time_ticks, y_ticks=charts.byte_ticks,
-                    x_format=fmt_time_tick, y_format=fmt_bytes_tick, x_value=fmt_seconds, y_value=fmt_bytes,
-                    labels="all" if test_name == "mathlib" else "front",
-                    reference=(ref["x"], ref["y"]) if ref else None,
-                    width=780 if test_name == "mathlib" else 380, height=500 if test_name == "mathlib" else 300))})
-    env.get_template("quiet/pareto.html").stream({
-        **common, "root_path": prefix + "../", "quiet_root": prefix, "nav": "pareto",
-        "parallel_svg": _svg(charts.parallel(parallel_rows(board, season), [(c, titles[c]) for c in pareto_ids],
-                                             title="Every Pareto category at once",
-                                             subtitle="Each line is a ranked checker, its factor on every axis; the front in colour")),
-        "pair_svgs": [{"view": v, "svg": _svg(charts.pareto(
-            v["points"], title=f"{v['x_title']} and {v['y_title']}", x_label=f"{v['x_title'].lower()} (× {board['reference']})",
-            y_label=f"{v['y_title'].lower()} (× {board['reference']})", width=380, height=320))} for v in views],
-        "layers": layers, "pareto_ids": pareto_ids, "titles": titles,
-        "mathlib_charts": [a for a in absolute if a["test"] == "mathlib"],
-        "library_charts": [a for a in absolute if a["test"] != "mathlib" and a["x"] == "T4"],
-    }).dump(str(directory / "index.html"))
-
-    directory, prefix = page("libraries")
-    env.get_template("quiet/libraries.html").stream({
-        **common, "root_path": prefix + "../", "quiet_root": prefix, "nav": "libraries",
-        "matrices": [library_matrix(board, m) for m in season["metrics"] if has(m)],
-    }).dump(str(directory / "index.html"))
-
-    directory, prefix = page("tests")
-    groups = test_groups(board)
-    env.get_template("quiet/tests.html").stream({
-        **common, "root_path": prefix + "../", "quiet_root": prefix, "nav": "tests",
-        "groups": groups, "columns": [c["checker"] for c in groups[0]["tests"][0]["cells"]] if groups else [],
-    }).dump(str(directory / "index.html"))
 
     for test in board.get("tests", []):
         directory, prefix = page("test", test["name"])

@@ -66,4 +66,44 @@
     members.hidden = !details.open;
     details.addEventListener("toggle", function () { members.hidden = !details.open; });
   });
+
+  // Categories: a tab bar over its panels. Without this script every panel shows, stacked and linked.
+  document.querySelectorAll('[role="tablist"]').forEach(function (list) {
+    var tabs = Array.prototype.slice.call(list.querySelectorAll('[role="tab"]'));
+    var panels = tabs.map(function (t) { return document.getElementById(t.getAttribute("aria-controls")); });
+    function select(i, focus) {
+      tabs.forEach(function (t, j) {
+        var on = j === i;
+        t.setAttribute("aria-selected", on ? "true" : "false");
+        t.tabIndex = on ? 0 : -1;
+        if (panels[j]) panels[j].hidden = !on;
+      });
+      if (focus && tabs[i]) tabs[i].focus();
+    }
+    var start = 0;
+    tabs.forEach(function (t, j) { if (t.getAttribute("aria-selected") === "true") start = j; });
+    select(start, false);
+    list.addEventListener("click", function (event) {
+      var tab = event.target.closest && event.target.closest('[role="tab"]');
+      if (tab && tabs.indexOf(tab) >= 0) select(tabs.indexOf(tab), false);
+    });
+    list.addEventListener("keydown", function (event) {
+      var i = tabs.indexOf(document.activeElement);
+      if (i < 0) return;
+      var n = tabs.length;
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") { select((i + 1) % n, true); event.preventDefault(); }
+      else if (event.key === "ArrowLeft" || event.key === "ArrowUp") { select((i - 1 + n) % n, true); event.preventDefault(); }
+      else if (event.key === "Home") { select(0, true); event.preventDefault(); }
+      else if (event.key === "End") { select(n - 1, true); event.preventDefault(); }
+    });
+  });
+
+  // A link carrying data-tab reveals that panel's tab before the anchor jumps to it.
+  document.addEventListener("click", function (event) {
+    var link = event.target.closest && event.target.closest("[data-tab]");
+    if (!link) return;
+    var panel = document.getElementById(link.getAttribute("data-tab"));
+    var tab = panel && document.getElementById(panel.getAttribute("aria-labelledby"));
+    if (tab) tab.click();
+  });
 })();

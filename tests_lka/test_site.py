@@ -237,29 +237,37 @@ class RenderedRound(unittest.TestCase):
     def page(self, *parts) -> str:
         return (self.out.joinpath(*parts)).read_text()
 
-    def test_every_category_has_a_page(self):
+    def test_every_category_is_a_panel_on_the_one_board(self):
+        html = self.page("quiet", "index.html")
         for category in self.board["categories"]:
             with self.subTest(category=category["id"]):
-                self.assertTrue((self.out / "quiet" / "category" / category["id"] / "index.html").exists())
+                if category["id"] == "overall":
+                    self.assertIn('id="overall"', html)
+                else:
+                    self.assertIn(f'id="cat-{category["id"]}"', html)
+                    self.assertIn(f'aria-controls="cat-{category["id"]}"', html)
         ids = [c["id"] for c in self.board["categories"]]
         self.assertIn("instructions", ids)
         self.assertIn("arena", ids)
+        # consolidated: the per-category pages are gone, their content is on the one board
+        self.assertFalse((self.out / "quiet" / "category").exists())
 
-    def test_the_arena_page_lists_every_checker_in_the_official_order(self):
-        html = self.page("quiet", "category", "arena", "index.html")
+    def test_the_arena_order_on_the_board_is_the_official_order(self):
+        html = self.page("quiet", "index.html")
         table = html[html.index('id="arena-order"'):]
         table = table[:table.index("</table>")]
         self.assertEqual(re.findall(r'data-checker="([^"]+)"', table), official_order(self.published))
 
-    def test_the_arena_page_states_the_rule(self):
-        html = self.page("quiet", "category", "arena", "index.html").lower()
+    def test_the_board_states_the_arena_rule(self):
+        html = self.page("quiet", "index.html").lower()
         for phrase in ("invalid proofs accepted", "valid proofs rejected", "instructions on mathlib", "tests declined"):
             self.assertIn(phrase, html)
 
-    def test_the_home_page_has_a_tile_for_every_category(self):
+    def test_every_tile_opens_its_category_on_the_board(self):
         for home in (self.page("index.html"), self.page("quiet", "index.html")):
             for category in self.board["categories"]:
-                self.assertIn(f'category/{category["id"]}/', home)
+                anchor = "#overall" if category["id"] == "overall" else f'#cat-{category["id"]}'
+                self.assertIn(anchor, home)
 
     def test_every_link_inside_the_board_resolves(self):
         quiet = (self.out / "quiet").resolve()
@@ -279,26 +287,30 @@ class RenderedRound(unittest.TestCase):
                     broken.append(f"{page.relative_to(self.out)} -> {href}")
         self.assertEqual(broken, [])
 
-    def test_the_new_pages_are_there(self):
-        for parts in (("pareto",), ("libraries",), ("tests",), ("test", "mathlib"), ("test", "perf", "app-lam"),
-                      ("test", "tutorial", "001_basicDef")):
+    def test_the_test_pages_are_there_and_the_folded_sections_are_on_the_board(self):
+        for parts in (("test", "mathlib"), ("test", "perf", "app-lam"), ("test", "tutorial", "001_basicDef")):
             with self.subTest(page="/".join(parts)):
                 self.assertTrue((self.out / "quiet").joinpath(*parts, "index.html").exists())
+        html = self.page("quiet", "index.html")
+        for section in ('id="categories"', 'id="pareto"', 'id="libraries"', 'id="tests"'):
+            self.assertIn(section, html)
+        for gone in ("pareto", "libraries", "tests"):
+            self.assertFalse((self.out / "quiet" / gone / "index.html").exists())
 
-    def test_the_pareto_page_shows_every_front(self):
-        html = self.page("quiet", "pareto", "index.html")
+    def test_the_board_shows_every_pareto_front(self):
+        html = self.page("quiet", "index.html")
         self.assertEqual(html.count("chart-parallel"), 1)
         pairs, mathlib, other_libraries = 3, 2, 7
         self.assertEqual(html.count("chart-pareto"), pairs + mathlib + other_libraries)
         self.assertIn("logos-kernel", html)
 
-    def test_the_libraries_page_has_every_library(self):
-        html = self.page("quiet", "libraries", "index.html")
+    def test_the_board_has_every_library(self):
+        html = self.page("quiet", "index.html")
         for library in ("mathlib", "init", "std", "cslib", "cedar", "con-leche", "navier-stokes-euler", "reachability"):
             self.assertIn(f"test/{library}/", html)
 
-    def test_the_tests_page_has_every_test_and_every_checker(self):
-        html = self.page("quiet", "tests", "index.html")
+    def test_the_board_has_every_test_and_every_checker(self):
+        html = self.page("quiet", "index.html")
         for test in self.published["tests"]:
             self.assertIn(f'data-test="{test["name"]}"', html)
         for checker in self.published["checkers"]:
