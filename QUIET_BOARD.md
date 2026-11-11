@@ -69,19 +69,22 @@ nix develop --command quietbox/preview-live.sh
 2. `sudo quietbox/provision.sh machines/<machine>.yaml` from a checkout: packages, Nix, accounts,
    the sandbox, the egress policy, the root helpers, the runner service; it ends with the selftest
    and refuses to finish unless every check passes.
-3. Stage the inputs and build the reference checker:
-   `lka.py quiet-stage ...` and `lka.py quiet-build --checker official --results /srv/lka/results`.
-4. Calibrate as root: `quietbox/calibrate.py soak`, then `sentinel` and `box` with the chosen clock,
-   then `noise` with each quieting knob, then `write`. Commit the calibrated profile and re-run
-   `provision.sh` so `/etc/lka/machine.json` matches it.
-5. `sudo /usr/local/libexec/lka/lka-preflight --write` records the machine's epoch.
-6. Put a fine-grained token for the repository (Administration: read and write) in
-   `/etc/lka/github-token` (mode 0600, root), and `systemctl enable --now lka-runner`.
-7. In the repository: set the variable `QUIET_BOARD` to `on`, enable Pages from GitHub Actions,
+3. `sudo quietbox/bringup.sh machines/<machine>.yaml` runs the rest in order, each phase idempotent:
+   it builds the twin-verifying kernel, draws the round seed, fetches the Arena's published round,
+   exports any test no export holds, stages the round's inputs (the manifest), builds the reference
+   checker, calibrates (the soak for the clock, then the sentinel band, the box factor and the noise
+   floor, then `write`), records the machine's epoch, and enables the runner. A single phase runs on
+   its own, e.g. `bringup.sh machines/<machine>.yaml stage`. After `calibrate` it stops to have you
+   **commit the calibrated profile** and re-run `provision.sh` so `/etc/lka/machine.json` matches it;
+   then `bringup.sh machines/<machine>.yaml epoch` re-records the epoch (the profile is part of the
+   fingerprint) and `... runner` enables the runner once the token is in place.
+4. Before `bringup.sh` reaches its `runner` phase, put a fine-grained token for the repository
+   (Administration: read and write) in `/etc/lka/github-token` (mode 0600, root).
+5. In the repository: set the variable `QUIET_BOARD` to `on`, enable Pages from GitHub Actions,
    require approval for workflows from outside collaborators, disable `build-and-deploy.yml` (it
    deploys the official Arena's Pages), and create the environment `quiet-box` with yourself as a
    required reviewer: no pull request's checker reaches the box until you approve its run.
-8. Run the **Quiet board import** workflow once: it merges every checker and test from
+6. Run the **Quiet board import** workflow once: it merges every checker and test from
    leanprover/lean-kernel-arena, then on the box builds each kernel from scratch and runs it once on
    every test, one kernel at a time (each one's verdicts and first timings show up as its own job),
    then ranks them all in interleaved passes until every cell is measured enough, and publishes.
