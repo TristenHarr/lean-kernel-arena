@@ -8,8 +8,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from lka_quiet.cli import (StageError, built_checkers, cmd_quiet_stage, encode_round, public_tests, run_env,
-                           score_store, stage_tests)
+from lka_quiet.cli import (StageError, built_checkers, cmd_quiet_stage, encode_round, missing_inputs, public_tests,
+                           run_env, score_store, stage_tests)
 from lka_quiet.encode import fingerprint
 from lka_quiet.session import RunStore
 
@@ -100,6 +100,27 @@ class Staging(unittest.TestCase):
                                    store=tmp / "store", allow_mismatch=set(), link=True)
             mathlib = Path(next(t["path"] for t in manifest["tests"] if t["name"] == "mathlib"))
             self.assertEqual(mathlib.stat().st_ino, (tmp / "exports" / "mathlib.ndjson").stat().st_ino)
+
+    def test_the_inputs_no_source_holds_are_named(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            src = published(tmp)
+            source = exports(tmp)
+            (source / "mathlib.ndjson").unlink()
+            missing = missing_inputs(src / "results.json", tarball=src / "lean-arena-tests.tar.gz", sources=[source],
+                                     allow_mismatch={"cedar"})
+            self.assertEqual(missing, ["mathlib"])
+
+    def test_a_file_with_other_bytes_does_not_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            src = published(tmp)
+            source = exports(tmp)
+            (source / "mathlib.ndjson").write_bytes(b"some other mathlib\n")
+            self.assertEqual(missing_inputs(src / "results.json", tarball=src / "lean-arena-tests.tar.gz",
+                                            sources=[source], allow_mismatch={"cedar"}), ["mathlib"])
+            self.assertEqual(missing_inputs(src / "results.json", tarball=src / "lean-arena-tests.tar.gz",
+                                            sources=[source], allow_mismatch={"cedar", "mathlib"}), [])
 
     def test_a_mismatch_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:

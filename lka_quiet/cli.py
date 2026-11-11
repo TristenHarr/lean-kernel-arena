@@ -179,6 +179,33 @@ def encode_round(manifest: dict, *, seed: str, store: Path, twin_from, twin_pref
             "seed_sha256": hashlib.sha256(seed.encode()).hexdigest(), "twins_refused": sorted(refused)}
 
 
+def missing_inputs(results_json: Path, *, tarball: Path | None, sources, allow_mismatch) -> list[str]:
+    """The round's tests that neither the test tarball nor any source directory holds with the
+    published bytes (a test allowed to mismatch needs only a file): the exports to build before
+    staging, as a new round brings new tests."""
+    published = json.loads(Path(results_json).read_text())
+    from_tarball = _tarball_members(tarball)
+    missing = []
+    for test in sorted(published["tests"], key=lambda t: t["name"]):
+        name = test["name"]
+        if name in from_tarball and hashlib.sha256(from_tarball[name]).hexdigest() == test["sha256"]:
+            continue
+        files = [Path(s) / f"{name}.ndjson" for s in sources]
+        files = [f for f in files if f.is_file()]
+        if any(_sha_file(f) == test["sha256"] for f in files) or (files and name in allow_mismatch):
+            continue
+        missing.append(name)
+    return missing
+
+
+def cmd_quiet_missing(args, lka) -> int:
+    missing = missing_inputs(Path(args.published) / "results.json",
+                             tarball=Path(args.published) / "lean-arena-tests.tar.gz",
+                             sources=[Path(s) for s in args.source], allow_mismatch=set(args.allow_mismatch or []))
+    sys.stdout.write("".join(f"{name}\n" for name in missing))
+    return 0
+
+
 def run_env(environ) -> dict:
     """The environment a checker runs with: the arena's devShell, without anything that varies per job."""
     out = {}
@@ -476,6 +503,11 @@ def add_parsers(subparsers) -> None:
     stage.add_argument("--verify-with", metavar="KERNEL",
                        help="The official checker; a twin is staged only if it rejects it (required with --twin)")
 
+    missing = subparsers.add_parser("quiet-missing", help="Name the round's tests no tarball or export holds")
+    missing.add_argument("--published", required=True, metavar="DIR")
+    missing.add_argument("--source", action="append", default=[], metavar="DIR")
+    missing.add_argument("--allow-mismatch", action="append", metavar="TEST")
+
     measure = subparsers.add_parser("quiet-measure", help="Run a quiet-board measurement session")
     measure.add_argument("--machine", required=True, help="Machine profile (machines/*.yaml)")
     measure.add_argument("--manifest", required=True, help="Staged-tests manifest (see quiet-stage)")
@@ -524,5 +556,5 @@ def add_parsers(subparsers) -> None:
     score.add_argument("--out", default="_build/board.json")
 
 
-COMMANDS = {"quiet-stage": cmd_quiet_stage, "quiet-build": cmd_quiet_build, "quiet-measure": cmd_quiet_measure,
+COMMANDS = {"quiet-stage": cmd_quiet_stage, "quiet-missing": cmd_quiet_missing, "quiet-build": cmd_quiet_build, "quiet-measure": cmd_quiet_measure,
             "quiet-score": cmd_quiet_score, "quiet-pr-stage": cmd_quiet_pr_stage, "quiet-pr-report": cmd_quiet_pr_report}

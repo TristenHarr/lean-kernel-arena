@@ -29,13 +29,31 @@ runs:
           (umask 077 && od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$STATE/rounds/$round/seed")
         fi
 
+    - name: The Arena's published round
+      shell: bash
+      run: |
+        curl -fsSL -o "$STATE/published/results.json" https://arena.lean-lang.org/results.json
+        curl -fsSL -o "$STATE/published/lean-arena-tests.tar.gz" https://arena.lean-lang.org/lean-arena-tests.tar.gz
+
+    # A new round brings new tests: those neither the tarball nor the staged exports hold with the
+    # published bytes are exported here with the Arena's own recipe, then staged like the rest.
+    - name: Export the round's tests no export holds
+      shell: bash
+      working-directory: ${{ inputs.tree }}
+      run: |
+        mapfile -t missing < <(nix develop --command python3 lka.py quiet-missing --published "$STATE/published" \
+          --source "$STATE/exports" --allow-mismatch cedar)
+        if [ "${#missing[@]}" -gt 0 ]; then
+          echo "exporting ${missing[*]}"
+          nix develop --command python3 lka.py build-test "${missing[@]}"
+          for name in "${missing[@]}"; do install -D -m 0644 "_build/tests/$name.ndjson" "$STATE/exports/$name.ndjson"; done
+        fi
+
     - name: Stage the round's inputs
       shell: bash
       working-directory: ${{ inputs.tree }}
       run: |
         round="$(date -u +%Y-%m)"
-        curl -fsSL -o "$STATE/published/results.json" https://arena.lean-lang.org/results.json
-        curl -fsSL -o "$STATE/published/lean-arena-tests.tar.gz" https://arena.lean-lang.org/lean-arena-tests.tar.gz
         manifest="$STATE/rounds/$round/manifest.json"
         if [ -s "$manifest" ] && python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); r = json.load(open(sys.argv[2])); sys.exit(m["arena_revision"] != r["meta"]["git_revision"])' "$manifest" "$STATE/published/results.json"; then
           echo "the round's inputs are staged for this arena revision"
