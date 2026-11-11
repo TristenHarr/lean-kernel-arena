@@ -5,6 +5,8 @@ Wants=network-online.target
 
 [Service]
 ExecStart=/usr/local/libexec/lka/jit-runner.sh
+# A service reads no login profile: the jobs' `nix develop` needs Nix's own profile on the PATH.
+Environment=PATH=/nix/var/nix/profiles/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Restart=always
 RestartSec=10
 # The runner waits on GitHub between jobs; it keeps to the housekeeping CPU like the rest of the system.

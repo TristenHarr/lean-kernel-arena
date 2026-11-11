@@ -23,7 +23,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends \
   "linux-tools-$(uname -r)" linux-tools-common acct gcc libc6-dev python3 python3-yaml rsync nftables \
-  jq curl git ca-certificates xz-utils dmidecode util-linux >/dev/null
+  jq curl git ca-certificates xz-utils dmidecode util-linux gh >/dev/null
 
 echo "== nix"
 if ! command -v nix >/dev/null && [ ! -x /nix/var/nix/profiles/default/bin/nix ]; then
@@ -64,7 +64,7 @@ chmod 0644 /etc/lka/machine.json /etc/lka/nixpkgs-rev
 
 echo "== sudoers"
 cat > /etc/sudoers.d/lka.tmp <<EOF
-lka-runner ALL=(root) NOPASSWD: $libexec/lka-measure, $libexec/lka-measure --build, $libexec/lka-measure --remove, $libexec/lka-quiet on, $libexec/lka-quiet off, $libexec/lka-quiet status, $libexec/lka-preflight --check
+lka-runner ALL=(root) NOPASSWD: $libexec/lka-measure "", $libexec/lka-measure --build, $libexec/lka-measure --remove, $libexec/lka-quiet on, $libexec/lka-quiet off, $libexec/lka-quiet status, $libexec/lka-preflight --check
 EOF
 visudo -cf /etc/sudoers.d/lka.tmp
 mv /etc/sudoers.d/lka.tmp /etc/sudoers.d/lka
@@ -93,12 +93,18 @@ EOF
 install -m 0755 "$here/quietbox/jit-runner.sh" "$libexec/jit-runner.sh"
 install -m 0644 "$here/quietbox/lka-runner.service" /etc/systemd/system/lka-runner.service
 systemctl daemon-reload
-if [ ! -x "$state/runner/actions-runner/run.sh" ]; then
-  version="$(curl -fsSL https://api.github.com/repos/actions/runner/releases/latest | jq -r .tag_name | sed 's/^v//')"
+# The runner is the release pinned in quietbox/actions-runner.lock, checked against its published sha256.
+read -r runner_version runner_sha256 < "$here/quietbox/actions-runner.lock"
+if [ "$(cat "$state/runner/actions-runner/.lka-version" 2>/dev/null)" != "$runner_version" ]; then
+  tarball="$(mktemp)"
+  curl -fsSL -o "$tarball" "https://github.com/actions/runner/releases/download/v$runner_version/actions-runner-linux-x64-$runner_version.tar.gz"
+  echo "$runner_sha256  $tarball" | sha256sum -c --quiet
+  rm -rf "$state/runner/actions-runner"
   install -d -o lka-runner -g lka-runner "$state/runner/actions-runner"
-  curl -fsSL "https://github.com/actions/runner/releases/download/v$version/actions-runner-linux-x64-$version.tar.gz" \
-    | runuser -u lka-runner -- tar -xz -C "$state/runner/actions-runner"
+  runuser -u lka-runner -- tar -xzf "$tarball" -C "$state/runner/actions-runner"
+  rm -f "$tarball"
   "$state/runner/actions-runner/bin/installdependencies.sh" >/dev/null
+  echo "$runner_version" > "$state/runner/actions-runner/.lka-version"
 fi
 
 echo "== measurement selftest"
@@ -107,9 +113,10 @@ LKA_MACHINE=/etc/lka/machine.json python3 "$here/quietbox/selftest.py"
 
 cat <<EOF
 
-The quiet box is provisioned. Next:
-  1. sudo quietbox/calibrate.py $machine_yaml      (thermal soak, pinned clock, sentinel limits, box factor)
-  2. sudo $libexec/lka-preflight --write             (record this machine's epoch)
-  3. put a fine-grained token for the repository (Administration: read and write) in /etc/lka/github-token (0600)
-  4. sudo systemctl enable --now lka-runner
+The quiet box is provisioned. The rest of the bring-up (quietbox/bringup.sh runs every step):
+  1. stage the round's inputs and build the official checker
+  2. calibrate: sudo quietbox/calibrate.py soak, then sentinel, box and noise, then write; commit the profile
+  3. sudo $libexec/lka-preflight --write             (record this machine's epoch)
+  4. a fine-grained token for the repository (Administration: read and write) in /etc/lka/github-token (0600)
+  5. sudo systemctl enable --now lka-runner
 EOF
