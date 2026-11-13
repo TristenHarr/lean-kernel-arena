@@ -1,0 +1,37 @@
+# Deploy the preview board to this fork's GitHub Pages, without the quiet box. The preview is the quiet-board
+# site rendered from the official arena's latest published round (measured on the arena's own, non-quiet,
+# runners), re-scored under the season and marked a preview on every page. Run it by hand while the quiet box
+# has not yet measured a round of its own; once it has, the Quiet board workflow publishes the real numbers.
+name: Preview board deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build the preview and deploy to Pages
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: python3 -m pip install --quiet jinja2 jsonschema markdown pyyaml
+      - name: Build the preview site from the latest official round
+        run: quietbox/preview-live.sh _out
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _out
+      - id: deploy
+        uses: actions/deploy-pages@v4
